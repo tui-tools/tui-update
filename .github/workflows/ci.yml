@@ -173,9 +173,12 @@ jobs:
       # Pinned like everything else the job runs: @latest would make the
       # result depend on the day. Dependabot does not track this one, so
       # bump the version here when golang/vuln cuts a release.
+      # v1.1.4 is pinned in the template and panics building SSA over Go 1.27
+      # sources ("unexpected expr: *ast.KeyValueExpr"): the x/tools it carries
+      # predates the syntax. v1.7.0 is the first release that reads them.
       - name: govulncheck
         env:
-          GOVULNCHECK_VERSION: "v1.1.4"
+          GOVULNCHECK_VERSION: "v1.7.0"
         run: |
           go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           govulncheck ./...
