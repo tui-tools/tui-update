@@ -1,5 +1,7 @@
 <img src="assets/logo.png" alt="tui-update" width="240">
 
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/tui-tools/tui-update/badge)](https://scorecard.dev/viewer/?uri=github.com/tui-tools/tui-update)
+
 A terminal UI for the updates waiting on your machine. It reads them from
 whichever package manager the machine actually runs — `pacman`, `apt` or `dnf` —
 and answers the question a list of versions never does: **what will applying
