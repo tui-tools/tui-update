@@ -1,21 +1,21 @@
  ID Command line                         Date and time       Action(s) Altered
-143 dnf install yt6801-dkms              2026-06-19 16:49:43                 1
-142 dnf remove yt6801-dkms               2026-06-19 16:45:53                 1
+143 dnf install tui-update               2026-06-19 16:49:43                 1
+142 dnf remove tui-update                2026-06-19 16:45:53                 1
 141 dnf -y install --nogpgcheck --disabl 2026-06-19 16:44:38                 1
 140 dnf -y install --nogpgcheck --disabl 2026-06-19 16:44:21                 1
-139 dnf install -y tailscale             2026-05-04 14:34:34                 1
-138 dnf reinstall 1password-cli          2026-04-30 13:12:04                 2
-137 dnf reinstall 1password              2026-04-30 13:11:50                 2
-136 dnf install yt6801-dkms              2026-04-30 13:03:17                 1
-135 dnf remove yt6801-dkms               2026-04-30 13:03:11                 1
-134 dnf remove yt6801-dkms               2026-04-30 13:00:31                 1
-133 dnf remove yt6801-dkms               2026-04-30 12:59:34                 1
+139 dnf install -y openssh-server        2026-05-04 14:34:34                 1
+138 dnf reinstall coreutils              2026-04-30 13:12:04                 2
+137 dnf reinstall bash                   2026-04-30 13:11:50                 2
+136 dnf install tzdata                   2026-04-30 13:03:17                 1
+135 dnf remove tzdata                    2026-04-30 13:03:11                 1
+134 dnf remove curl                      2026-04-30 13:00:31                 1
+133 dnf remove vim-enhanced              2026-04-30 12:59:34                 1
 132 dnf -y install --nogpgcheck --disabl 2026-04-30 12:54:57                 1
 131 dnf -y install --nogpgcheck --disabl 2026-04-30 12:54:40                 1
 130 dnf -y install --nogpgcheck --disabl 2026-04-30 12:52:08                 2
 129 dnf install cmake make git python3 g 2026-04-24 04:24:39                 1
-128 dnf install 1password 1password-cli  2026-04-20 12:53:03                 2
-127 dnf remove 1password-cli             2026-04-20 12:52:06                 1
-126 dnf remove 1password                 2026-04-20 12:52:00                 1
-125 dnf upgrade 1password-cli            2026-04-17 20:56:39                 2
-124 dnf upgrade 1password                2026-04-17 20:34:06                 2
+128 dnf install bash coreutils           2026-04-20 12:53:03                 2
+127 dnf remove curl                      2026-04-20 12:52:06                 1
+126 dnf remove vim-enhanced              2026-04-20 12:52:00                 1
+125 dnf upgrade systemd                  2026-04-17 20:56:39                 2
+124 dnf upgrade glibc                    2026-04-17 20:34:06                 2

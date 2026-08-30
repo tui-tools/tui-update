@@ -24,7 +24,7 @@ func splitLines(text string) []string {
 // both print:
 //
 //	glibc 2.42-1 -> 2.42-2
-//	nvidia-utils 580.95.05-1 -> 590.48.01-1 [ignored]
+//	tui-update 0.2.0-1 -> 0.3.0-1 [ignored]
 //
 // The two commands are interchangeable here on purpose: checkupdates is a
 // shell script around a private sync database, and what it prints is what
@@ -472,7 +472,7 @@ func ParseRebootRequiredPkgs(text string) []string {
 
 // dnfCheckUpdateRe matches a line of `dnf check-update`:
 //
-//	nvidia-modprobe.x86_64      3:590.48.01-1.fc42     cuda-fedora42-x86_64
+//	vim-enhanced.x86_64      2:9.1.1450-1.fc42     updates
 //
 // The columns are space-padded, and a very long name pushes the version onto
 // the next line — a shape this deliberately skips rather than guesses at,
@@ -600,7 +600,7 @@ func nevraNameArch(nevra string) (string, bool) {
 
 // dnfHistoryRe matches a line of `dnf history list`:
 //
-//	143 dnf install yt6801-dkms              2026-06-19 16:49:43                 1
+//	143 dnf install tui-update               2026-06-19 16:49:43                 1
 //
 // dnf4 and dnf5 pad the columns differently, so the line is read as
 // "id, then the date, then what is left", rather than by column position.
