@@ -2,6 +2,10 @@
 
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/tui-tools/tui-update/badge)](https://scorecard.dev/viewer/?uri=github.com/tui-tools/tui-update)
 
+> **Beta.** Beta: the family is days old and still changing. Package names,
+> flags and keys may move without notice until 1.0. Pin versions, and report
+> what breaks.
+
 A terminal UI for the updates waiting on your machine. It reads them from
 whichever package manager the machine actually runs — `pacman`, `apt` or `dnf` —
 and answers the question a list of versions never does: **what will applying
@@ -126,7 +130,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.1.1/tui-update_0.1.1_linux_amd64.tar.gz | tar -xz tui-update
+curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.1.2/tui-update_0.1.2_linux_amd64.tar.gz | tar -xz tui-update
 sudo install -m0755 tui-update /usr/local/bin/tui-update
 ```
 
@@ -525,6 +529,14 @@ widgets, the config loader and the command runner shared by the whole family.
 - `dnf check-update` exits 100 when there are updates and `needs-restarting -r`
   exits 1 when a reboot is needed. Both are answers, not failures, and they are
   read as such.
+
+## Contributing
+
+Contributions arrive as pull requests, and the guide the whole family follows
+is [CONTRIBUTING.md](https://github.com/tui-tools/tui-kit/blob/main/CONTRIBUTING.md)
+in tui-kit. A vulnerability goes to
+[SECURITY.md](https://github.com/tui-tools/tui-kit/blob/main/SECURITY.md)
+instead, never into a public issue.
 
 ## License
 
