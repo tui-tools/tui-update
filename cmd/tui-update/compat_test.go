@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tui-tools/tui-kit/compat"
@@ -103,6 +105,35 @@ func TestVersionRegexReadsRealOutput(t *testing.T) {
 		if got := compat.ParseVersion(test.output, b.VersionRegex); got != test.want {
 			t.Errorf("%s: ParseVersion(%q) = %q, want %q",
 				test.manager, test.output, got, test.want)
+		}
+	}
+}
+
+// TestVersionRegexAgainstCapturedBanners runs the same patterns over the
+// `--version` output captured verbatim in internal/pkgmgr/testdata. The table
+// above is the readable form; this is the one that cannot drift from what a
+// real machine printed.
+func TestVersionRegexAgainstCapturedBanners(t *testing.T) {
+	tests := []struct {
+		manager string
+		fixture string
+		want    string
+	}{
+		{updates.ManagerDNF, "dnf5-version.txt", "5.2.18"},
+		{updates.ManagerDNF, "dnf4-version.txt", "4.24.0"},
+		{updates.ManagerAPT, "apt-version.txt", "2.7.14"},
+		{updates.ManagerPacman, "pacman-version.txt", "7.0.0"},
+	}
+	for _, test := range tests {
+		raw, err := os.ReadFile(filepath.Join(
+			"..", "..", "internal", "pkgmgr", "testdata", test.fixture))
+		if err != nil {
+			t.Fatalf("read %s: %v", test.fixture, err)
+		}
+		b := backend(t, test.manager)
+		if got := compat.ParseVersion(string(raw), b.VersionRegex); got != test.want {
+			t.Errorf("%s: ParseVersion(%s) = %q, want %q",
+				test.manager, test.fixture, got, test.want)
 		}
 	}
 }
