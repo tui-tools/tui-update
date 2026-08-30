@@ -515,20 +515,6 @@ func ParseDNFCheckUpdate(out string) []updates.Package {
 	return packages
 }
 
-// ParseRPMInstalled reads `rpm -q --qf '%{NAME}.%{ARCH}|<evr>'`, returning
-// the installed version of each package keyed by "name.arch".
-func ParseRPMInstalled(out string) map[string]string {
-	installed := map[string]string{}
-	for _, line := range splitLines(out) {
-		name, version, ok := strings.Cut(strings.TrimSpace(line), "|")
-		if !ok || name == "" {
-			continue
-		}
-		installed[name] = version
-	}
-	return installed
-}
-
 // ParseDNFSizes reads `dnf repoquery --upgrades`, returning the download size
 // in bytes keyed by "name.arch".
 func ParseDNFSizes(out string) map[string]int64 {

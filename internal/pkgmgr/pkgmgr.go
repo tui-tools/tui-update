@@ -10,7 +10,9 @@
 //
 // One manager is active on a machine. Which one is decided by the binary that
 // is installed, cross-checked against /etc/os-release, so a Debian container
-// on an Arch host does not end up driving the host's pacman.
+// on an Arch host does not end up driving the host's pacman. That decision is
+// the same one every tool in the family makes, so it is the kit's pkgmgr that
+// makes it here too; what this package adds is what only an update tool needs.
 //
 //	pacman   Arch and Omarchy. checkupdates when pacman-contrib and fakeroot
 //	         are both installed and `pacman -Qu` when they are not, plus
@@ -35,127 +37,48 @@ import (
 	"strings"
 
 	"github.com/tui-tools/tui-kit/compat"
+	kit "github.com/tui-tools/tui-kit/pkgmgr"
 	"github.com/tui-tools/tui-kit/runner"
 	"github.com/tui-tools/tui-update/internal/updates"
 )
 
 // ErrNotAvailable reports that no supported package manager was found on this
 // machine.
-var ErrNotAvailable = runner.ErrNotAvailable
+var ErrNotAvailable = kit.ErrNotAvailable
 
 // historyLimit is how many past transactions the history screen shows.
 const historyLimit = 20
 
-// installHint is appended to the "not found" error.
+// installHint is what the runner appends when a binary this backend wanted is
+// not on the machine. The kit's own detection error carries the family's
+// version of the same sentence.
 const installHint = "tui-update drives pacman, apt or dnf; " +
 	"or use --demo to explore the UI"
 
-// osReleasePath is where the distribution identifies itself.
-const osReleasePath = "/etc/os-release"
-
-// managerIDs maps a manager to the /etc/os-release ID values that legitimately
-// carry it. A machine whose ID is not listed still works — a derivative nobody
-// has heard of is not a reason to refuse — but a machine carrying two managers
-// is resolved by this table rather than by the order of a slice.
-var managerIDs = map[string][]string{
-	// Omarchy Server identifies itself as "omarchy-server", with ID_LIKE
-	// "omarchy arch". The ID_LIKE fallback would find it anyway; it is listed
-	// by its own name because detection should not depend on a derivative
-	// remembering to name its parent.
-	updates.ManagerPacman: {"arch", "archarm", "omarchy", "omarchy-server",
-		"endeavouros", "manjaro", "cachyos"},
-	updates.ManagerAPT: {"debian", "ubuntu", "raspbian", "linuxmint", "pop", "devuan"},
-	updates.ManagerDNF: {"fedora", "rhel", "centos", "rocky", "almalinux", "ol"},
-}
-
-// managerBinary is the binary whose presence makes a manager a candidate.
+// managerBinary is the binary each manager is driven through here. It is not
+// the kit's detection table: this one names the binary tui-update's own reads
+// go to, which on Debian is `apt` for the upgradable list rather than the
+// `apt-get` the plan writes with.
 var managerBinary = map[string]string{
 	updates.ManagerPacman: "pacman",
 	updates.ManagerAPT:    "apt",
 	updates.ManagerDNF:    "dnf",
 }
 
-// managerOrder is the order candidates are considered in when /etc/os-release
-// settles nothing.
-var managerOrder = []string{
-	updates.ManagerPacman, updates.ManagerAPT, updates.ManagerDNF,
-}
-
-// DistroID reads the ID field of /etc/os-release, plus ID_LIKE as a fallback
-// for a derivative that names its parent. An unreadable file is not an error:
-// it only means the binary search decides alone.
-func DistroID() (id string, like []string) {
-	raw, err := os.ReadFile(osReleasePath)
-	if err != nil {
-		return "", nil
-	}
-	for _, line := range splitLines(string(raw)) {
-		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if !ok {
-			continue
-		}
-		value = strings.Trim(value, `"'`)
-		switch key {
-		case "ID":
-			id = value
-		case "ID_LIKE":
-			like = strings.Fields(value)
-		}
-	}
-	return id, like
-}
-
-// Detect picks the package manager this machine runs.
+// Detect picks the package manager this machine runs, and names the
+// distribution it belongs to.
 //
-// The binary has to be there — a manager that is not installed is not the
-// machine's manager, whatever /etc/os-release claims. Among the ones that are,
-// the distribution decides: Ubuntu images ship an `rpm` and Fedora images can
-// carry an `apt`, and the tool that upgrades the machine is the one its own
-// distribution says it is.
+// The decision itself — which manager binaries are installed, cross-checked
+// against /etc/os-release so a Debian container on an Arch host does not drive
+// the host's pacman — is the kit's, and identical in every tool of the family.
+// What is left here is the translation into the manager-neutral strings
+// internal/updates is written in.
 func Detect() (string, string, error) {
-	id, like := DistroID()
-
-	var installed []string
-	for _, manager := range managerOrder {
-		bin := managerBinary[manager]
-		if runner.Available(bin, searchPaths[bin]...) {
-			installed = append(installed, manager)
-		}
+	manager, distro, err := kit.Detect()
+	if err != nil {
+		return "", distro.ID, err
 	}
-	if len(installed) == 0 {
-		return "", id, fmt.Errorf(
-			"pkgmgr: no supported package manager found: %w (%s)",
-			ErrNotAvailable, installHint)
-	}
-
-	for _, candidate := range []string{id} {
-		for _, manager := range installed {
-			if matchesDistro(manager, candidate) {
-				return manager, id, nil
-			}
-		}
-	}
-	for _, candidate := range like {
-		for _, manager := range installed {
-			if matchesDistro(manager, candidate) {
-				return manager, id, nil
-			}
-		}
-	}
-	return installed[0], id, nil
-}
-
-// matchesDistro reports whether a distribution id belongs to a manager.
-func matchesDistro(manager, id string) bool {
-	if id == "" {
-		return false
-	}
-	for _, known := range managerIDs[manager] {
-		if strings.EqualFold(known, id) {
-			return true
-		}
-	}
-	return false
+	return manager.String(), distro.ID, nil
 }
 
 // Real drives the machine's package manager. It satisfies updates.Backend.
@@ -616,7 +539,9 @@ func (r *Real) loadPendingDNF(ctx context.Context) ([]updates.Package, error) {
 	}
 	if cmd, buildErr := BuildInstalledVersionsDNF(names); buildErr == nil {
 		if rpmOut, rpmErr := r.read(ctx, cmd); rpmErr == nil || rpmOut != "" {
-			installed := ParseRPMInstalled(rpmOut)
+			// The `key|version` shape is the one the kit asks dpkg-query
+			// and rpm for too, so the reader is shared.
+			installed := kit.ParsePipedVersions(rpmOut)
 			for i := range packages {
 				packages[i].Current = installed[packages[i].Label()]
 			}
