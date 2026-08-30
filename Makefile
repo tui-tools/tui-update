@@ -66,7 +66,7 @@ screenshots: build
 	python3 $(KIT)/tools/render-screenshots.py \
 		--bin $(BIN)/$(TOOL) --name $(TOOL) --out docs/screenshots \
 		--screen main=jj --screen plan=p --screen confirm=pU \
-		--screen 'reboot=pUyR' --screen timers=t --screen help=?
+		--screen apply=pUy --screen timers=t --screen help=?
 
 ## readme: regenerate the generated README sections from tool.json.
 readme:

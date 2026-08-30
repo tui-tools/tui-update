@@ -159,7 +159,7 @@ as each one answers, so a long download is visible rather than a frozen screen.
 
 ## It never reboots by itself
 
-![The reboot](docs/screenshots/tui-update-reboot.png)
+![The apply screen](docs/screenshots/tui-update-apply.png)
 
 When the upgrade needed a reboot, the apply screen offers `R` afterwards — with
 its own confirm dialog, naming the reason and warning that every session on the
