@@ -169,7 +169,7 @@ func checkupdatesUnavailable(installed bool) string {
 	if !installed {
 		return "it is not installed (pacman-contrib)"
 	}
-	if !runner.Available("fakeroot", searchPaths["fakeroot"]...) {
+	if !available("fakeroot") {
 		return "fakeroot is not installed, and checkupdates builds its " +
 			"private database under it"
 	}
