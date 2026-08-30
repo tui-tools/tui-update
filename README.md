@@ -251,6 +251,7 @@ legible.
 tui-update                        # drive the real package manager
 tui-update --demo                 # sample machine, no privileges needed
 tui-update --check                # read the updates, print JSON, exit
+tui-update --report               # print what a bug report needs, exit
 tui-update --theme ~/mytheme/colors.toml
 tui-update --sudo ""              # run the commands directly (as root)
 tui-update --version
@@ -292,6 +293,49 @@ is already on disk. The smoke test asserts it on the cache's own mtime.
 [tui-lab](https://github.com/tui-tools/tui-lab) uses it to test this tool
 against real machines on Arch, Ubuntu and Fedora; the assertions live in
 [`test/smoke.sh`](test/smoke.sh).
+
+### `--report`, for bug reports
+
+`--report` prints, in one block, everything a maintainer has to ask for
+otherwise: the tool and kit versions, the package manager and the version
+probed off it, which of the binaries around it are installed, the
+distribution, the kernel, the terminal, the theme, the escalation prefix, and
+whether the running binary came from a package. It needs no privileges and
+reads no updates, so it answers instantly and it works on the machine where
+the bug is — including one where no supported manager can be detected at all,
+which is itself a thing worth reporting.
+
+```console
+$ tui-update --report
+tui-update 0.1.0 (kit v0.2.9)
+backend: dnf 5.2.18
+mode: live
+distro: fedora 42 (Fedora Linux 42 (Workstation Edition))
+kernel: 6.19.14-108.fc42.x86_64
+arch: x86_64
+locale: en_US.UTF-8
+term: xterm-256color
+theme: tokyo-night
+sudo: sudo -n
+root: no
+binary: /usr/bin/tui-update (packaged)
+helpers: dnf present, rpm present, needs-restarting present, snapper absent, systemctl present
+```
+
+The `helpers` line is the one worth reading twice: most of what looks like a
+bug here is a binary that is not installed. A pending list that looks stale is
+`checkupdates` or `fakeroot` missing, an empty restart list is `needrestart` or
+`needs-restarting` missing, a plan that takes no snapshot is `snapper` missing.
+
+The block is written to be published as it is: it carries no hostname, user
+name, home path or address, and no environment variable beyond `LANG`,
+`LC_ALL`, `TERM` and `TERM_PROGRAM`. A binary living under your home directory
+is reported as being there without naming the path. `--report` works with
+`--demo` too, where it says so on the `mode` line and names the manager the
+sample machine imitates.
+
+The bug form asks for this block first — see
+[`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml).
 
 ## What it can do to your machine
 
