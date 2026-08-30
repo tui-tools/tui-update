@@ -328,13 +328,13 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `pacman` |
 | Version read with | `pacman --version` |
 | Minimum | 6.0 |
-| Tested | none yet |
+| Tested | `7.1.0` |
 
 | Versions | What changes |
 | --- | --- |
 | `>=6.0` | pacman publishes no security metadata, so no update is ever marked as a security fix here; the column reads `n/a` rather than `no` |
 | `>=6.0` | there is no dry run that does not first synchronise the databases, which needs root, so the plan quotes the pending list instead of a simulated transaction |
-| `>=6.0` | without pacman-contrib there is no `checkupdates`, so the pending list is whatever the last `pacman -Sy` left on disk |
+| `>=6.0` | `checkupdates` needs pacman-contrib *and* fakeroot, since it builds its private copy of the sync database under it; without either the pending list falls back to `pacman -Qu`, which is whatever the last `pacman -Sy` left on disk, and the screen says so |
 | `>=6.0` | on Omarchy Server the upgrade runs through `omarchy-server-update run --no-reboot`, and `omarchy-server-update-restart --dry-run` is what classifies the restarts; on plain Arch there is no classifier and the package names decide |
 
 ### apt
@@ -344,7 +344,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `apt` |
 | Version read with | `apt --version` |
 | Minimum | 2.0 |
-| Tested | none yet |
+| Tested | `2.8.3` |
 | Version-gated features | `solver3` (since 2.9.3) |
 
 | Versions | What changes |
@@ -360,7 +360,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `dnf` |
 | Version read with | `dnf --version` |
 | Minimum | 4.0 |
-| Tested | `5.2.18` |
+| Tested | `5.2.18`, `5.4.1` |
 | Version-gated features | `dnf5` (since 5.0) |
 
 | Versions | What changes |

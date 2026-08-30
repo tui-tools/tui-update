@@ -405,6 +405,35 @@ func TestEmptyMachineSaysSo(t *testing.T) {
 	}
 }
 
+// TestPendingFailureIsNotAnUpToDateMachine: on Omarchy Server 4.0.1
+// `checkupdates` cannot run, and the whole screen used to go with it. The
+// pending list is one section of the model; when it fails the rest still
+// arrives, and the empty table says the list could not be read rather than
+// claiming there is nothing to install.
+func TestPendingFailureIsNotAnUpToDateMachine(t *testing.T) {
+	a, _ := newTestApp(t, 120, 30)
+	send(a, loadedMsg{model: updates.Model{
+		Manager:      "pacman",
+		PendingError: "`checkupdates` failed: Cannot find the fakeroot binary",
+		Timers: []updates.Timer{{
+			Unit: "omarchy-server-update.timer", Present: true, State: "disabled",
+		}},
+		Snapshot: updates.Snapshot{Available: true, Config: "root"},
+	}})
+
+	view := a.View()
+	if strings.Contains(view, "up to date") {
+		t.Errorf("a failed read must not read as up to date:\n%s", view)
+	}
+	if !strings.Contains(a.status, "fakeroot") {
+		t.Errorf("status = %q, want the reason the read failed", a.status)
+	}
+	// The sections that did load are still there to be looked at.
+	if len(a.model.Timers) != 1 || !a.model.Snapshot.Available {
+		t.Error("the rest of the model was dropped with the pending list")
+	}
+}
+
 // TestHelpScreenCoversEveryActionKey: a key the tool answers that the help
 // screen does not name is a key nobody will find.
 func TestHelpScreenCoversEveryActionKey(t *testing.T) {

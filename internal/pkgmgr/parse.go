@@ -101,11 +101,31 @@ func ParsePacmanLog(text string, limit int) []updates.Transaction {
 	}
 
 	// Newest first, and only as many as the screen asked for.
+	transactions = withPackageChanges(transactions)
 	reverse(transactions)
 	if limit > 0 && len(transactions) > limit {
 		transactions = transactions[:limit]
 	}
 	return transactions
+}
+
+// withPackageChanges drops the logged pacman runs that changed no package.
+//
+// Every `pacman -Sy` writes a `Running '…'` line and nothing else, and on
+// Omarchy Server a single update runs pacman three times — a bare `-Sy`, a
+// keyring refresh, then the upgrade — so a history built from the log alone
+// is mostly rows with an empty detail column. apt and dnf list transactions
+// rather than invocations, and this is what makes pacman's screen agree with
+// theirs.
+func withPackageChanges(transactions []updates.Transaction) []updates.Transaction {
+	kept := transactions[:0]
+	for _, transaction := range transactions {
+		if transaction.Detail == "" {
+			continue
+		}
+		kept = append(kept, transaction)
+	}
+	return kept
 }
 
 // bump adds one to the count of an action in a "2 upgraded, 1 installed"

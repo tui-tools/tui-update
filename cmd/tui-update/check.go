@@ -46,6 +46,10 @@ type checkReport struct {
 	// is zero, so a script can compare it without checking for a null.
 	Pending  int `json:"pending"`
 	Security int `json:"security"`
+	// PendingError is set when the pending list could not be read. Every other
+	// field is still the machine's real state; this one says that the count
+	// above is not, so a script never reads a failed read as "nothing to do".
+	PendingError string `json:"pendingError,omitempty"`
 	// RebootRequired is the manager's own verdict, not a guess from the
 	// package names; Restart is the merged classification.
 	RebootRequired bool     `json:"rebootRequired"`
@@ -91,6 +95,7 @@ func runCheck(backend updates.Backend, backendCompat compat.Result,
 		Describe:       backend.Describe(),
 		Pending:        len(model.Pending),
 		Security:       model.SecurityCount,
+		PendingError:   model.PendingError,
 		RebootRequired: model.Restart.RebootRequired,
 		Restart:        model.Restart.Class,
 		Services:       model.Restart.Services,

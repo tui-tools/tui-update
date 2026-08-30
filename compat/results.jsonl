@@ -1,1 +1,4 @@
 {"backend":"dnf","date":"2026-08-30","distro":"fedora-42","result":"pass","suite":"smoke","tool":"tui-update","version":"5.2.18"}
+{"backend": "dnf", "date": "2026-08-30", "distro": "fedora-44", "result": "pass", "suite": "smoke", "tool": "tui-update", "version": "5.4.1"}
+{"backend": "apt", "date": "2026-08-30", "distro": "ubuntu-24.04", "result": "pass", "suite": "smoke", "tool": "tui-update", "version": "2.8.3"}
+{"backend": "pacman", "date": "2026-08-30", "distro": "omarchy-server-4.0.1", "result": "pass", "suite": "smoke", "tool": "tui-update", "version": "7.1.0"}

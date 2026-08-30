@@ -12,8 +12,9 @@
 // is installed, cross-checked against /etc/os-release, so a Debian container
 // on an Arch host does not end up driving the host's pacman.
 //
-//	pacman   Arch and Omarchy. checkupdates when pacman-contrib is installed,
-//	         and Omarchy Server's own update wrapper when the machine has it.
+//	pacman   Arch and Omarchy. checkupdates when pacman-contrib and fakeroot
+//	         are both installed and `pacman -Qu` when they are not, plus
+//	         Omarchy Server's own update wrapper when the machine has it.
 //	apt      Debian and Ubuntu, with needrestart and /var/run/reboot-required.
 //	dnf      Fedora and RHEL, dnf4 and dnf5, with needs-restarting.
 //
@@ -28,6 +29,7 @@ package pkgmgr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -56,9 +58,14 @@ const osReleasePath = "/etc/os-release"
 // has heard of is not a reason to refuse — but a machine carrying two managers
 // is resolved by this table rather than by the order of a slice.
 var managerIDs = map[string][]string{
-	updates.ManagerPacman: {"arch", "archarm", "omarchy", "endeavouros", "manjaro", "cachyos"},
-	updates.ManagerAPT:    {"debian", "ubuntu", "raspbian", "linuxmint", "pop", "devuan"},
-	updates.ManagerDNF:    {"fedora", "rhel", "centos", "rocky", "almalinux", "ol"},
+	// Omarchy Server identifies itself as "omarchy-server", with ID_LIKE
+	// "omarchy arch". The ID_LIKE fallback would find it anyway; it is listed
+	// by its own name because detection should not depend on a derivative
+	// remembering to name its parent.
+	updates.ManagerPacman: {"arch", "archarm", "omarchy", "omarchy-server",
+		"endeavouros", "manjaro", "cachyos"},
+	updates.ManagerAPT: {"debian", "ubuntu", "raspbian", "linuxmint", "pop", "devuan"},
+	updates.ManagerDNF: {"fedora", "rhel", "centos", "rocky", "almalinux", "ol"},
 }
 
 // managerBinary is the binary whose presence makes a manager a candidate.
@@ -167,6 +174,9 @@ type Real struct {
 	// wrapper, which changes both how an upgrade is applied and how what it
 	// leaves behind is classified.
 	omarchy bool
+	// noCheckupdates explains, on pacman, why `checkupdates` cannot be used
+	// here. It is empty when it can be.
+	noCheckupdates string
 }
 
 // NewReal locates the binaries and, when not running as root, validates the
@@ -212,7 +222,43 @@ func NewReal(sudoPrefix []string, caps compat.Caps) (*Real, error) {
 	}
 	real.omarchy = manager == updates.ManagerPacman &&
 		real.runners[OmarchyUpdate] != nil
+	if manager == updates.ManagerPacman {
+		real.noCheckupdates = checkupdatesUnavailable(real.has("checkupdates"))
+	}
 	return real, nil
+}
+
+// checkupdatesUnavailable says why `checkupdates` cannot be used on this
+// machine, and returns "" when it can.
+//
+// checkupdates is how pacman-contrib lists pending updates without touching
+// the real sync database: it copies the database somewhere private and
+// synchronises the copy, and it does that copy under `fakeroot`. So the
+// checkupdates script being installed is not enough — fakeroot has to be
+// there too, and it is a separate package that a server image has no other
+// reason to carry. Omarchy Server 4.0.1 ships one without the other, where
+// every call fails with "Cannot find the fakeroot binary".
+//
+// It is checked before the call rather than after it because the failing call
+// is the one that goes through `sudo`, and an image that will never satisfy
+// it should not produce a sudo complaint on every refresh.
+func checkupdatesUnavailable(installed bool) string {
+	if !installed {
+		return "it is not installed (pacman-contrib)"
+	}
+	if !runner.Available("fakeroot", searchPaths["fakeroot"]...) {
+		return "fakeroot is not installed, and checkupdates builds its " +
+			"private database under it"
+	}
+	return ""
+}
+
+// staleListNote is what the screen says when the pending list came from
+// `pacman -Qu` instead of checkupdates: the same packages, compared against
+// the sync database already on disk rather than a freshly synchronised copy.
+func staleListNote(reason string) string {
+	return "checkupdates unavailable (" + reason + "); pending list may be " +
+		"stale — the plan's -Syu refreshes"
 }
 
 // add builds one runner, ignoring a binary the machine does not have.
@@ -382,14 +428,27 @@ func (r *Real) has(bin string) bool { return r.runners[bin] != nil }
 // The read is layered, and every layer is allowed to fail on its own: a
 // machine whose classifier needs a privilege `sudo -n` cannot grant still
 // shows its pending list, and says in the plan how the classification was
-// reached instead. Only a total failure to list the pending updates is an
-// error.
+// reached instead.
+//
+// The pending list is a layer like the others. When it cannot be read the
+// model carries the reason in PendingError and the rest of it is still filled
+// in: the snapshot support, the unattended-update timers, the restart probe
+// and the history are read from somewhere else entirely, and losing all of
+// them to one broken command is how a missing dependency turns into a blank
+// screen. Load itself returns an error only when the manager is one it does
+// not know.
 func (r *Real) Load(ctx context.Context) (updates.Model, error) {
 	model := updates.Model{Manager: r.manager, Distro: r.distro}
 
-	pending, err := r.loadPending(ctx)
+	pending, notes, err := r.loadPending(ctx)
 	if err != nil {
-		return updates.Model{}, err
+		if errors.Is(err, errUnknownManager) {
+			return updates.Model{}, err
+		}
+		model.PendingError = runner.FirstLine(err.Error())
+		notes = append(notes, "the pending list could not be read ("+
+			model.PendingError+"), so everything below describes the machine "+
+			"but nothing above lists what is waiting")
 	}
 	model.Pending = pending
 	for _, p := range pending {
@@ -401,9 +460,15 @@ func (r *Real) Load(ctx context.Context) (updates.Model, error) {
 	model.Restart = MergeRestart(ClassifyFromPackages(pending), r.probeRestart(ctx))
 	model.Snapshot = r.loadSnapshot(ctx)
 	model.Timers = r.loadTimers(ctx)
-	model.Notes = r.notes()
+	model.Notes = append(notes, r.notes()...)
 	return model, nil
 }
+
+// errUnknownManager is the one pending-list failure that is not about the
+// machine: a manager this build has no reader for at all. It is a programming
+// error rather than a fact worth reporting on a screen, so it is the only one
+// Load refuses to continue past.
+var errUnknownManager = fmt.Errorf("pkgmgr: unknown package manager")
 
 // notes are the facts about this machine worth stating once.
 func (r *Real) notes() []string {
@@ -412,10 +477,6 @@ func (r *Real) notes() []string {
 		notes = append(notes, OmarchyUpdate+" is installed, so an upgrade "+
 			"runs through it and it classifies what changed")
 	}
-	if r.manager == updates.ManagerPacman && !r.has("checkupdates") {
-		notes = append(notes, "checkupdates is not installed (pacman-contrib), "+
-			"so the pending list is whatever the last `pacman -Sy` left on disk")
-	}
 	if !CapabilitiesFor(r.manager).SecurityMetadata {
 		notes = append(notes, r.manager+" publishes no security metadata, "+
 			"so no update here can be marked as a security fix")
@@ -423,32 +484,96 @@ func (r *Real) notes() []string {
 	return notes
 }
 
-// loadPending reads the pending update list for the active manager.
-func (r *Real) loadPending(ctx context.Context) ([]updates.Package, error) {
+// loadPending reads the pending update list for the active manager, along
+// with anything about how it was read that the screen should say out loud.
+func (r *Real) loadPending(ctx context.Context) ([]updates.Package, []string, error) {
 	switch r.manager {
 	case updates.ManagerPacman:
 		return r.loadPendingPacman(ctx)
 	case updates.ManagerAPT:
-		return r.loadPendingAPT(ctx)
+		packages, err := r.loadPendingAPT(ctx)
+		return packages, nil, err
 	case updates.ManagerDNF:
-		return r.loadPendingDNF(ctx)
+		packages, err := r.loadPendingDNF(ctx)
+		return packages, nil, err
 	default:
-		return nil, fmt.Errorf("pkgmgr: unknown package manager %q", r.manager)
+		return nil, nil, fmt.Errorf("%w %q", errUnknownManager, r.manager)
 	}
 }
 
 // loadPendingPacman prefers checkupdates and falls back to `pacman -Qu`.
 //
-// Both exit 2 when there is nothing to do, which is not a failure: an empty
-// list is the answer.
-func (r *Real) loadPendingPacman(ctx context.Context) ([]updates.Package, error) {
-	cmd := BuildPendingPacman(r.has("checkupdates"))
-	out, err := r.read(ctx, cmd)
-	packages := ParsePacmanPending(out)
-	if len(packages) == 0 && err != nil && !isNothingToDo(out) {
-		return nil, err
+// The fallback is taken twice over: before the call, when the machine is
+// missing something checkupdates needs, and after it, when it failed anyway
+// for a reason nobody predicted. Either way the answer comes from pacman's
+// own query against the sync database on disk, and the note says which it was
+// — an older list is worth having, an empty screen is not.
+func (r *Real) loadPendingPacman(ctx context.Context) ([]updates.Package,
+	[]string, error) {
+	var notes []string
+	if r.noCheckupdates == "" {
+		packages, _, err := r.readPacmanPending(ctx, true)
+		if err == nil {
+			return packages, nil, nil
+		}
+		notes = append(notes, staleListNote(runner.FirstLine(err.Error())))
+	} else {
+		notes = append(notes, staleListNote(r.noCheckupdates))
 	}
-	return packages, nil
+
+	packages, out, err := r.readPacmanPending(ctx, false)
+	if err != nil {
+		return nil, notes, err
+	}
+	if syncDatabaseMissing(out) {
+		notes = append(notes, "the pacman sync databases have never been "+
+			"downloaded on this machine, so `pacman -Qu` has nothing to compare "+
+			"the installed versions against and reports nothing pending")
+	}
+	return packages, notes, nil
+}
+
+// readPacmanPending runs one of the two pending-list commands.
+//
+// Both exit non-zero when there is nothing to do, which is not a failure: an
+// empty list is the answer. So a failure is only a failure when it produced
+// neither a parseable list nor one of the "up to date" replies.
+func (r *Real) readPacmanPending(ctx context.Context,
+	useCheckupdates bool) ([]updates.Package, string, error) {
+	out, err := r.read(ctx, BuildPendingPacman(useCheckupdates))
+	packages := ParsePacmanPending(out)
+	if len(packages) == 0 && err != nil && !isNothingToDo(withoutPacmanWarnings(out)) {
+		return nil, out, err
+	}
+	return packages, out, nil
+}
+
+// withoutPacmanWarnings drops the lines pacman writes to complain rather than
+// to answer.
+//
+// It exists because `pacman -Qu` exits non-zero when nothing is upgradable,
+// which is an answer, and the way to tell that apart from a failure is that
+// it printed no packages. On a machine whose sync databases were never
+// downloaded it prints a warning per repository instead, and those lines are
+// enough to make an empty answer look like output from a failed command.
+func withoutPacmanWarnings(out string) string {
+	var kept []string
+	for _, line := range splitLines(out) {
+		if strings.HasPrefix(strings.TrimSpace(line), "warning:") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// syncDatabaseMissing recognises pacman warning that a repository's database
+// is not on disk at all. It happens on a freshly built image where no
+// `pacman -Sy` has ever run: `pacman -Qu` still succeeds, and still reports
+// nothing, because it has nothing to compare against.
+func syncDatabaseMissing(out string) bool {
+	return strings.Contains(out, "database file for") &&
+		strings.Contains(out, "does not exist")
 }
 
 // isNothingToDo recognises the empty answers pacman and dnf give.
@@ -804,6 +929,11 @@ func (r *Real) Plan(ctx context.Context, mode string) (updates.Plan, error) {
 	if err != nil {
 		return updates.Plan{}, err
 	}
+	if model.PendingError != "" {
+		return updates.Plan{}, fmt.Errorf(
+			"pkgmgr: the pending list could not be read, so there is nothing to "+
+				"plan from: %s", model.PendingError)
+	}
 	if len(model.Pending) == 0 {
 		return updates.Plan{}, fmt.Errorf("pkgmgr: there is nothing to upgrade")
 	}
@@ -891,17 +1021,17 @@ func pendingAsText(packages []updates.Package) string {
 func (r *Real) History(ctx context.Context) ([]updates.Transaction, error) {
 	switch r.manager {
 	case updates.ManagerPacman:
-		raw, err := os.ReadFile(PacmanLog)
+		raw, err := readLog(PacmanLog)
 		if err != nil {
 			return nil, err
 		}
-		return ParsePacmanLog(string(raw), historyLimit), nil
+		return ParsePacmanLog(raw, historyLimit), nil
 	case updates.ManagerAPT:
-		raw, err := os.ReadFile(APTHistoryLog)
+		raw, err := readLog(APTHistoryLog)
 		if err != nil {
 			return nil, err
 		}
-		return ParseAPTHistory(string(raw), historyLimit), nil
+		return ParseAPTHistory(raw, historyLimit), nil
 	case updates.ManagerDNF:
 		out, err := r.read(ctx, BuildHistoryDNF())
 		if err != nil && strings.TrimSpace(out) == "" {
@@ -911,6 +1041,28 @@ func (r *Real) History(ctx context.Context) ([]updates.Transaction, error) {
 	default:
 		return nil, fmt.Errorf("pkgmgr: unknown package manager %q", r.manager)
 	}
+}
+
+// readLog reads a manager's transaction log, saying what is missing rather
+// than repeating the syscall's own wording.
+//
+// A machine can legitimately have no log: an image built by installing into a
+// chroot and then cleaned, which is how Omarchy Server's cloud image is made,
+// starts life without one and grows it on the first upgrade. That is an empty
+// history, not a broken tool, and the sentence says so.
+func readLog(path string) (string, error) {
+	raw, err := os.ReadFile(path) //nolint:gosec // a constant path in this package
+	if err == nil {
+		return string(raw), nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("%s does not exist yet, so this machine has no "+
+			"recorded transactions", path)
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return "", fmt.Errorf("%s cannot be read by this user", path)
+	}
+	return "", err
 }
 
 // BuildTimerAction enables or disables an unattended-update unit.

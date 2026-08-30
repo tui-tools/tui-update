@@ -1,0 +1,20 @@
+Usage: omarchy-server-update [run|enable|disable|status|kexec|transactional|rollback] [flags]
+
+  run            update now, non-interactively (default), then restart what changed
+  enable         enable the daily omarchy-server-update.timer
+  disable        disable the daily omarchy-server-update.timer
+  status         report the mode, whether the timer is enabled and when it next runs
+  kexec          on|off|status -- whether a required reboot is taken with kexec
+  transactional  on|off|status -- whether updates build a new root instead of
+                 writing to the running one. The timer reads the same setting.
+  rollback       after a transactional update, boot the previous root again
+
+Mode, overriding the configured default for this run:
+  --transactional  update inside a snapshot of / and swap it in at reboot
+  --in-place       update the running root (the default)
+
+Flags, passed through to omarchy-server-update-restart:
+  --kexec       take a required reboot now, via kexec into the signed UKI
+  --no-reboot   never take a reboot (the reboot-required marker is still set)
+  --no-restart  classify and report, restart nothing (in-place mode only)
+  --dry-run     --no-restart, and do not set the marker either (in-place only)
