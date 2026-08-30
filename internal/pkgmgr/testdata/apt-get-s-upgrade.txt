@@ -1,0 +1,20 @@
+NOTE: This is only a simulation!
+      apt-get needs root privileges for real execution.
+      Keep also in mind that locking is deactivated,
+      so don't depend on the relevance to the real current situation!
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Calculating upgrade...
+The following packages will be upgraded:
+  libc-bin libc6 linux-image-generic openssh-server systemd vim-tiny
+6 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+Inst libc6 [2.39-0ubuntu8.4] (2.39-0ubuntu8.6 Ubuntu:24.04/noble-updates, Ubuntu:24.04/noble-security [amd64])
+Conf libc6 (2.39-0ubuntu8.6 Ubuntu:24.04/noble-updates, Ubuntu:24.04/noble-security [amd64])
+Inst libc-bin [2.39-0ubuntu8.4] (2.39-0ubuntu8.6 Ubuntu:24.04/noble-updates, Ubuntu:24.04/noble-security [amd64])
+Inst linux-image-generic [6.8.0-49.49] (6.8.0-51.52 Ubuntu:24.04/noble-updates [amd64])
+Inst openssh-server [1:9.6p1-3ubuntu13.4] (1:9.6p1-3ubuntu13.5 Ubuntu:24.04/noble-security [amd64])
+Inst systemd [255.4-1ubuntu8.4] (255.4-1ubuntu8.6 Ubuntu:24.04/noble-updates [amd64])
+Inst vim-tiny [2:9.1.0016-1ubuntu7.4] (2:9.1.0016-1ubuntu7.5 Ubuntu:24.04/noble-updates [amd64])
+Need to get 84.2 MB of archives.
+After this operation, 1,024 B of additional disk space will be used.

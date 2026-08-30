@@ -1,0 +1,10 @@
+1password.x86_64|8.12.24-1
+1password-cli.x86_64|2.34.1-1
+azure-cli.x86_64|2.87.0-1.el8
+code.x86_64|1.125.1-1781859648.el8
+forticlient.x86_64|7.4.7.1868-1.el7
+gh.x86_64|2.95.0-1
+google-chrome-stable.x86_64|149.0.7827.155-1
+nvidia-modprobe.x86_64|3:580.159.03-1.fc42
+nvidia-persistenced.x86_64|3:580.159.03-1.fc42
+nvidia-settings.x86_64|3:580.159.03-1.fc42

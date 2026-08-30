@@ -1,0 +1,3 @@
+Name                   Type     Severity  Package                              Issued
+FEDORA-2026-9a1f2b3c4d security Important openssl-3.2.4-3.fc42.x86_64          2026-08-21 03:11:02
+FEDORA-2026-7c5d8e0a11 security Moderate  kernel-6.14.9-300.fc42.x86_64        2026-08-23 01:44:19

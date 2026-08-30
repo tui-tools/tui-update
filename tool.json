@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "name": "tui-template",
-  "binary": "tui-template",
-  "tagline": "A working skeleton for a new tui-tools tool",
-  "description": "The starting point for a new tool in the family. Press **Use this template**, rename it, replace one package, and you have a tool that looks and behaves like the rest.\n\nIt is not a pile of TODOs: it is a working tool. It lists the files in a directory and can update a file's timestamp, which is deliberately trivial — what matters is the shape around it, and that shape is already correct: the action table that generates the key map, the help screen and the confirm dialog; the backend interface with a real and a fake implementation; `--demo`; CI; and GoReleaser.\n\nThis `tool.json` is itself the example. It is a valid manifest, validated against [the schema](https://github.com/tui-tools/tui-kit/blob/main/schema/tool.schema.json) on every CI run, and the values are the ones you replace.",
-  "category": "template",
-  "homepage": "https://github.com/tui-tools/tui-template",
-  "repo": "https://github.com/tui-tools/tui-template",
+  "name": "tui-update",
+  "binary": "tui-update",
+  "tagline": "Pending package updates, what they restart, and a snapshot first",
+  "description": "A terminal UI for the updates waiting on your machine. It reads them from whichever package manager the machine actually runs — `pacman`, `apt` or `dnf` — and shows what a list of versions never tells you: what applying them will cost.\n\nEvery pending update is on one screen, with its current and new version, its repository, its size and its security flag where the manager publishes one, and the kernel and firmware sorted to the top because they are what turns an upgrade into a reboot.\n\n`enter` gives you the plan: the manager's own dry run, the restart classification — nothing, the services still holding replaced code open, or a reboot with the reason — whether a `snapper` snapshot can be taken first and the exact command that would take it, and the whole sequence, in order, before anything runs.\n\n`U` applies it behind a confirm dialog carrying that sequence, streaming the output as it goes. It never reboots by itself: when the upgrade needs one it offers `R`, with its own confirmation.\n\nRun `tui-update --demo` to drive a sample machine: every key works, every command is built and previewed for real, and nothing touches your system.",
+  "category": "packages",
+  "homepage": "https://github.com/tui-tools/tui-update",
+  "repo": "https://github.com/tui-tools/tui-update",
   "license": "MIT",
   "platforms": [
     "linux/amd64",
@@ -16,30 +16,62 @@
   "logo": "assets/logo.png",
   "screenshots": [
     {
-      "path": "docs/screenshots/tui-template-main.png",
-      "caption": "The list: the four bands every tool in the family draws"
+      "path": "docs/screenshots/tui-update-main.png",
+      "caption": "The pending list: current to new, repository, size and the security flag, kernel and firmware first"
     },
     {
-      "path": "docs/screenshots/tui-template-touch.png",
-      "caption": "The confirm dialog, showing the exact command line before it runs"
+      "path": "docs/screenshots/tui-update-plan.png",
+      "caption": "The plan: restart classification, the snapshot that would be taken, and the whole command sequence"
     },
     {
-      "path": "docs/screenshots/tui-template-help.png",
-      "caption": "The help screen, generated from the action table"
+      "path": "docs/screenshots/tui-update-confirm.png",
+      "caption": "The confirm dialog, carrying every command of the sequence before the first one runs"
+    },
+    {
+      "path": "docs/screenshots/tui-update-reboot.png",
+      "caption": "The reboot the upgrade asked for: offered afterwards, never taken by the tool itself"
+    },
+    {
+      "path": "docs/screenshots/tui-update-timers.png",
+      "caption": "The unattended-update timers, and what enabling one means"
+    },
+    {
+      "path": "docs/screenshots/tui-update-help.png",
+      "caption": "The help screen, generated from the same key table as the hint bar"
     }
   ],
   "keys": [
     {
+      "key": "enter / p",
+      "action": "Plan: what applying the updates would do"
+    },
+    {
+      "key": "U",
+      "action": "Apply the plan, after confirming the whole sequence"
+    },
+    {
+      "key": "m",
+      "action": "On apt, switch between upgrade and dist-upgrade"
+    },
+    {
+      "key": "h",
+      "action": "The package manager's own transaction history"
+    },
+    {
       "key": "t",
-      "action": "Touch the selected file"
+      "action": "The unattended-update timers, with enable and disable"
+    },
+    {
+      "key": "e / d",
+      "action": "On the timers screen: enable or disable the unit"
+    },
+    {
+      "key": "R",
+      "action": "Re-read; on a finished upgrade, offer the reboot"
     },
     {
       "key": "/",
-      "action": "Filter the list"
-    },
-    {
-      "key": "r / ctrl+r",
-      "action": "Re-read the directory"
+      "action": "Filter the packages across every column"
     },
     {
       "key": "?",
@@ -52,84 +84,180 @@
   ],
   "backends": [
     {
-      "name": "coreutils",
-      "binary": "touch",
+      "name": "pacman",
+      "binary": "pacman",
       "versionCommand": [
-        "touch",
+        "pacman",
         "--version"
       ],
-      "versionRegex": "coreutils\\) ([0-9][0-9.]*)",
-      "minimum": "8.0",
+      "versionRegex": "Pacman v([0-9][0-9.]*)",
+      "minimum": "6.0",
       "searchPaths": [
-        "/usr/bin/touch",
-        "/bin/touch"
+        "/usr/bin/pacman",
+        "/bin/pacman"
+      ],
+      "notes": [
+        {
+          "range": ">=6.0",
+          "impact": "pacman publishes no security metadata, so no update is ever marked as a security fix here; the column reads `n/a` rather than `no`"
+        },
+        {
+          "range": ">=6.0",
+          "impact": "there is no dry run that does not first synchronise the databases, which needs root, so the plan quotes the pending list instead of a simulated transaction"
+        },
+        {
+          "range": ">=6.0",
+          "impact": "without pacman-contrib there is no `checkupdates`, so the pending list is whatever the last `pacman -Sy` left on disk"
+        },
+        {
+          "range": ">=6.0",
+          "impact": "on Omarchy Server the upgrade runs through `omarchy-server-update run --no-reboot`, and `omarchy-server-update-restart --dry-run` is what classifies the restarts; on plain Arch there is no classifier and the package names decide"
+        }
+      ],
+      "tested": []
+    },
+    {
+      "name": "apt",
+      "binary": "apt",
+      "versionCommand": [
+        "apt",
+        "--version"
+      ],
+      "versionRegex": "apt ([0-9][0-9.]*)",
+      "minimum": "2.0",
+      "searchPaths": [
+        "/usr/bin/apt",
+        "/bin/apt"
       ],
       "features": [
         {
-          "name": "no-dereference",
-          "since": "8.1"
+          "name": "solver3",
+          "since": "2.9.3"
         }
       ],
       "notes": [
         {
-          "range": "<8.1",
-          "impact": "`touch -h` is missing, so the timestamp of a symlink is set on its target instead of on the link"
+          "range": ">=2.0",
+          "impact": "a security update is one whose pocket ends in `-security`; apt publishes no advisory id, so that pocket name is the whole reference"
+        },
+        {
+          "range": ">=2.0",
+          "impact": "neither `apt list --upgradable` nor `apt-get -s upgrade` reports a per-package size, so the size column is not shown; the plan carries apt's own download and disk totals instead"
+        },
+        {
+          "range": ">=2.0",
+          "impact": "the services to restart come from `needrestart -b`, which reads other processes' memory maps and therefore needs root; without it the package names decide"
         }
+      ],
+      "tested": []
+    },
+    {
+      "name": "dnf",
+      "binary": "dnf",
+      "versionCommand": [
+        "dnf",
+        "--version"
+      ],
+      "versionRegex": "([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)",
+      "minimum": "4.0",
+      "searchPaths": [
+        "/usr/bin/dnf",
+        "/bin/dnf"
+      ],
+      "features": [
+        {
+          "name": "dnf5",
+          "since": "5.0"
+        }
+      ],
+      "notes": [
+        {
+          "range": ">=5.0",
+          "impact": "`dnf --version` prints `dnf5 version 5.2.18.0`, where dnf4 prints a bare `4.24.0` on its first line; both are read by the same pattern, which keeps three components because a four-part version is not one the family schema records"
+        },
+        {
+          "range": ">=5.0",
+          "impact": "`dnf needs-restarting` refreshes the repository metadata before answering, which a read path must not do, so the standalone `needs-restarting` binary from dnf-plugins-core is used instead and its absence falls back to the package names"
+        },
+        {
+          "range": ">=4.0",
+          "impact": "`dnf check-update` exits 100 when there are updates, so its exit code is interpreted rather than treated as a failure; it also prints only the new version, and the installed one is read from rpm"
+        }
+      ],
+      "tested": [
+        "5.2.18"
       ]
     }
   ],
   "install": {
-    "source": {
-      "available": true,
-      "command": "git clone https://github.com/tui-tools/tui-template\ncd tui-template && make demo",
-      "url": "https://github.com/tui-tools/tui-template",
-      "note": "Or press \"Use this template\" on GitHub, which is the point of it."
-    },
     "pacman": {
       "available": false,
-      "package": "tui-template",
+      "package": "tui-update",
       "repo": "tui-tools",
       "requires_repo_setup": true,
-      "command": "sudo pacman -S tui-template",
+      "command": "sudo pacman -S tui-update",
       "url": "https://pkgs.tui.tools/arch",
-      "note": "The template is never packaged. This entry shows your tool's shape."
+      "note": "Add the tui-tools repository to pacman.conf first."
+    },
+    "aur": {
+      "available": false,
+      "package": "tui-update-bin",
+      "repo": "aur",
+      "command": "paru -S tui-update-bin",
+      "url": "https://aur.archlinux.org/packages/tui-update-bin",
+      "note": "The -bin package installs the released static binary."
     },
     "apt": {
       "available": false,
-      "package": "tui-template",
+      "package": "tui-update",
       "repo": "tui-tools",
       "requires_repo_setup": true,
-      "command": "sudo apt install tui-template",
+      "command": "sudo apt install tui-update",
       "url": "https://pkgs.tui.tools/deb",
-      "note": "The template is never packaged. This entry shows your tool's shape."
+      "note": "Add the tui-tools apt repository and its keyring first."
     },
     "dnf": {
       "available": false,
-      "package": "tui-template",
+      "package": "tui-update",
       "repo": "tui-tools",
       "requires_repo_setup": true,
-      "command": "sudo dnf install tui-template",
+      "command": "sudo dnf install tui-update",
       "url": "https://pkgs.tui.tools/rpm",
-      "note": "The template is never packaged. This entry shows your tool's shape."
+      "note": "Add the tui-tools.repo file first."
+    },
+    "zypper": {
+      "available": false,
+      "package": "tui-update",
+      "repo": "tui-tools",
+      "requires_repo_setup": true,
+      "command": "sudo zypper install tui-update",
+      "url": "https://pkgs.tui.tools/rpm",
+      "note": "Add the tui-tools repository first."
     },
     "binary": {
-      "available": false,
-      "pattern": "tui-template_{version}_linux_{arch}.tar.gz",
-      "command": "curl -fsSL https://github.com/tui-tools/tui-template/releases/download/v{version}/tui-template_{version}_linux_{arch}.tar.gz | tar -xz tui-template\nsudo install -m0755 tui-template /usr/local/bin/tui-template",
-      "url": "https://github.com/tui-tools/tui-template/releases",
-      "note": "The template is never released. Your tool is, once you tag v0.1.0."
+      "available": true,
+      "pattern": "tui-update_{version}_linux_{arch}.tar.gz",
+      "command": "curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v{version}/tui-update_{version}_linux_{arch}.tar.gz | tar -xz tui-update\nsudo install -m0755 tui-update /usr/local/bin/tui-update",
+      "url": "https://github.com/tui-tools/tui-update/releases",
+      "note": "One static binary. Verify it against checksums.txt from the same release."
+    },
+    "source": {
+      "available": true,
+      "command": "git clone https://github.com/tui-tools/tui-update\ncd tui-update && make build\nsudo install -m0755 bin/tui-update /usr/local/bin/tui-update",
+      "url": "https://github.com/tui-tools/tui-update",
+      "note": "Needs Go 1.27 or newer."
     }
   },
   "security": {
-    "needs_sudo": "Only the touch action escalates, and only when the configured prefix is non-empty. Listing a directory is an ordinary read. Replace this sentence with what your own tool escalates for.",
+    "needs_sudo": "Reads are unprivileged and never refresh the manager's metadata: `checkupdates`, `apt list --upgradable`, `dnf check-update` and `rpm -q` all answer to any user from what is on disk. Escalation is `sudo -n`, which never prompts, and covers the restart classifiers plus every change.",
     "preview_before_run": true,
     "no_daemon": true,
     "no_network": true,
     "static_binary": true,
     "signed_releases": false,
     "config_paths": [
-      "/etc/tui-template/config.toml",
-      "~/.config/tui-template/config.toml"
+      "/etc/tui-update/config.toml",
+      "~/.config/tui-update/config.toml"
     ]
   },
   "maintainers": [
@@ -140,10 +268,15 @@
   ],
   "since": "2026-08-29",
   "keywords": [
-    "template",
-    "scaffold",
-    "bubbletea",
-    "starter"
-  ],
-  "unreleased": true
+    "updates",
+    "packages",
+    "pacman",
+    "apt",
+    "dnf",
+    "snapper",
+    "needrestart",
+    "reboot",
+    "tui",
+    "bubbletea"
+  ]
 }

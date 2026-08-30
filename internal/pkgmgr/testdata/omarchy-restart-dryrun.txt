@@ -1,0 +1,6 @@
+kernel package changed, but 6.16.1-arch1-1 is still an installed kernel: no reboot for it
+systemd changed: would re-execute PID 1
+
+restarted: none
+deferred: dbus.service (deny-list) sshd.service (KillMode is not process: a restart would drop live sessions)
+reboot required: glibc 2.42-1 -> 2.42-2; linux-firmware 20260812.b1a1e1c9-1 -> 20260826.0a2f66a1-1
