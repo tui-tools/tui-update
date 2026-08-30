@@ -374,8 +374,12 @@ func ParseNeedrestart(out string) updates.Restart {
 	for _, line := range splitLines(out) {
 		line = strings.TrimSpace(line)
 		if match := needrestartSvcRe.FindStringSubmatch(line); match != nil {
-			restart.Services = append(restart.Services,
-				strings.TrimSuffix(match[1], ".service"))
+			// A line that is nothing but the suffix would leave a blank
+			// unit name in the sentence the plan screen prints and in the
+			// restart command built from it.
+			if unit := strings.TrimSuffix(match[1], ".service"); unit != "" {
+				restart.Services = append(restart.Services, unit)
+			}
 			continue
 		}
 		if match := needrestartKstaRe.FindStringSubmatch(line); match != nil {
@@ -420,6 +424,14 @@ func ParseAPTHistory(text string, limit int) []updates.Transaction {
 		key, value := match[1], strings.TrimSpace(match[2])
 		switch key {
 		case "Start-Date":
+			// The date is the block's identity and the history screen's
+			// first column. A blank one opens no transaction, and the
+			// fields that follow it belong to nothing rather than to the
+			// previous block.
+			if value == "" {
+				current = nil
+				continue
+			}
 			transactions = append(transactions, updates.Transaction{
 				ID: value, When: value,
 			})
@@ -524,8 +536,15 @@ func ParseDNFSizes(out string) map[string]int64 {
 		if len(fields) != 3 {
 			continue
 		}
+		// The first field is the "name.arch" the caller looks a package up
+		// by. A blank one is an entry no lookup could ever reach, and an
+		// rpm name never carries whitespace, so a field that does is a line
+		// this table did not produce.
+		if fields[0] == "" || strings.ContainsAny(fields[0], " \t") {
+			continue
+		}
 		size, err := strconv.ParseInt(fields[2], 10, 64)
-		if err != nil {
+		if err != nil || size < 0 {
 			continue
 		}
 		sizes[fields[0]] = size
@@ -640,7 +659,13 @@ func ParseNeedsRestartingServices(out string) []string {
 		if unit == "" || !strings.HasSuffix(unit, ".service") {
 			continue
 		}
-		services = append(services, strings.TrimSuffix(unit, ".service"))
+		// A unit name has no whitespace in it, and ".service" on its own
+		// would leave a blank one behind: either way the line is not a unit.
+		name := strings.TrimSuffix(unit, ".service")
+		if name == "" || strings.ContainsAny(name, " \t") {
+			continue
+		}
+		services = append(services, name)
 	}
 	return services
 }
