@@ -79,7 +79,7 @@ jobs:
         run: go test -race ./...
 
       - name: build
-        run: CGO_ENABLED=0 go build -trimpath -o /tmp/tui-template ./cmd/tui-template
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/tui-update ./cmd/tui-update
 
       - name: verify go.mod is tidy
         run: |
@@ -107,7 +107,7 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -o "/tmp/tui-template_${GOARCH}" ./cmd/tui-template
+        run: go build -trimpath -o "/tmp/tui-update_${GOARCH}" ./cmd/tui-update
 
   manifest:
     name: validate tool.json
@@ -171,4 +171,4 @@ jobs:
         run: |
           gh api repos/tui-tools/tui-tools.github.io/dispatches \
             -f event_type=tool-released \
-            -f 'client_payload[tool]=tui-template'
+            -f 'client_payload[tool]=tui-update'

@@ -1,0 +1,4 @@
+
+restarted: sshd nginx
+deferred: none
+reboot required: no
