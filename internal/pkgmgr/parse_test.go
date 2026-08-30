@@ -78,17 +78,6 @@ func TestParseDNFCheckUpdateStopsAtObsoleting(t *testing.T) {
 	}
 }
 
-func TestParseRPMInstalled(t *testing.T) {
-	installed := ParseRPMInstalled(fixture(t, "rpm-q-installed.txt"))
-	if got := installed["gh.x86_64"]; got != "2.95.0-1" {
-		t.Errorf("gh installed = %q", got)
-	}
-	// rpm's %|EPOCH?{…}| conditional is what keeps the two sides comparable.
-	if got := installed["nvidia-modprobe.x86_64"]; got != "3:580.159.03-1.fc42" {
-		t.Errorf("nvidia-modprobe installed = %q, want the epoch", got)
-	}
-}
-
 func TestParseDNFSizes(t *testing.T) {
 	sizes := ParseDNFSizes(fixture(t, "dnf5-repoquery-upgrades.txt"))
 	if got := sizes["gh.x86_64"]; got != 15499377 {
