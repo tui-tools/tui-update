@@ -9,11 +9,14 @@ import (
 	"github.com/tui-tools/tui-update/internal/updates"
 )
 
-// fixture reads a captured command output. The dnf ones were captured on a
-// real Fedora 42 host running dnf5; the apt and pacman ones are written by
-// hand against the documented line shapes, because no Debian or Arch machine
-// was available to capture from — every one of them is pinned by a test that
-// names the shape it is asserting.
+// fixture reads a captured command output.
+//
+// The dnf ones were captured on a real Fedora 42 host running dnf5, and the
+// pacman ones whose names end in a condition — no-fakeroot, no-sync-db,
+// dryrun-clean — on a real Omarchy Server 4.0.1 guest in the lab. The rest of
+// the apt and pacman set is written by hand against the documented line
+// shapes; every one of them is pinned by a test that names the shape it is
+// asserting.
 func fixture(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", name))

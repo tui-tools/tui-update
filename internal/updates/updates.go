@@ -217,6 +217,12 @@ type Model struct {
 	// omarchy-server-update wrapper found, a metadata cache nobody has
 	// refreshed, a classifier that needed a privilege it did not get.
 	Notes []string
+	// PendingError is set when the pending list could not be read at all. The
+	// rest of the model is still filled in — the snapshot support, the timers,
+	// the restart probe and the history come from elsewhere and are all still
+	// true — so this is what stops an empty Pending from being read as "this
+	// machine is up to date".
+	PendingError string
 }
 
 // Security returns the pending packages that carry a security fix.

@@ -107,14 +107,16 @@
         },
         {
           "range": ">=6.0",
-          "impact": "without pacman-contrib there is no `checkupdates`, so the pending list is whatever the last `pacman -Sy` left on disk"
+          "impact": "`checkupdates` needs pacman-contrib *and* fakeroot, since it builds its private copy of the sync database under it; without either the pending list falls back to `pacman -Qu`, which is whatever the last `pacman -Sy` left on disk, and the screen says so"
         },
         {
           "range": ">=6.0",
           "impact": "on Omarchy Server the upgrade runs through `omarchy-server-update run --no-reboot`, and `omarchy-server-update-restart --dry-run` is what classifies the restarts; on plain Arch there is no classifier and the package names decide"
         }
       ],
-      "tested": []
+      "tested": [
+        "7.1.0"
+      ]
     },
     {
       "name": "apt",
@@ -149,7 +151,9 @@
           "impact": "the services to restart come from `needrestart -b`, which reads other processes' memory maps and therefore needs root; without it the package names decide"
         }
       ],
-      "tested": []
+      "tested": [
+        "2.8.3"
+      ]
     },
     {
       "name": "dnf",
@@ -185,7 +189,8 @@
         }
       ],
       "tested": [
-        "5.2.18"
+        "5.2.18",
+        "5.4.1"
       ]
     }
   ],

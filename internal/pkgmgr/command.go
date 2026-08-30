@@ -63,6 +63,7 @@ const (
 var searchPaths = map[string][]string{
 	"pacman":           {"/usr/bin/pacman", "/bin/pacman"},
 	"checkupdates":     {"/usr/bin/checkupdates", "/bin/checkupdates"},
+	"fakeroot":         {"/usr/bin/fakeroot", "/bin/fakeroot"},
 	"apt":              {"/usr/bin/apt", "/bin/apt"},
 	"apt-get":          {"/usr/bin/apt-get", "/bin/apt-get"},
 	"dnf":              {"/usr/bin/dnf", "/bin/dnf"},
@@ -101,8 +102,8 @@ var snapperConfigRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 // precisely so a pending list can be read without touching the real sync
 // database. `pacman -Qu` is the fallback: it answers from whatever the last
 // `-Sy` left behind, which is older but never wrong about what is installed.
-func BuildPendingPacman(hasCheckupdates bool) updates.Command {
-	if hasCheckupdates {
+func BuildPendingPacman(useCheckupdates bool) updates.Command {
+	if useCheckupdates {
 		return updates.Command{
 			Argv:        []string{"checkupdates"},
 			Description: "List the pending updates against a private sync database",

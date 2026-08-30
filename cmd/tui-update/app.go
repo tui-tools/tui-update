@@ -246,9 +246,17 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.setStatus(ui.StatusError, msg.err.Error())
 			return a, nil
 		}
-		a.loadFailed = false
 		a.model = msg.model
 		a.applyFilter()
+		// A model that arrived with a pending-list failure is still worth
+		// showing — the timers, the snapshot support and the history in it are
+		// real — but the empty package table is not "up to date", and the
+		// status line has to be the one saying which.
+		a.loadFailed = msg.model.PendingError != ""
+		if a.loadFailed {
+			a.setStatus(ui.StatusError,
+				"the pending list could not be read: "+msg.model.PendingError)
+		}
 		return a, nil
 
 	case historyMsg:

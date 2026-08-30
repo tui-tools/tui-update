@@ -137,7 +137,9 @@ echo "--- tui-update smoke on $(. /etc/os-release && echo "$PRETTY_NAME")"
 # binary the distribution ships to upgrade itself.
 distro_id=$(. /etc/os-release && echo "$ID")
 case "$distro_id" in
-  arch | archarm | omarchy | endeavouros | manjaro | cachyos) manager=pacman ;;
+  arch | archarm | omarchy | omarchy-server | endeavouros | manjaro | cachyos)
+    manager=pacman
+    ;;
   debian | ubuntu | raspbian | linuxmint | pop | devuan) manager=apt ;;
   fedora | rhel | centos | rocky | almalinux | ol) manager=dnf ;;
   *)
@@ -199,7 +201,11 @@ fi
 #    test: a tool that fetched the output but failed to parse it reports zero.
 case "$manager" in
   pacman)
-    if command -v checkupdates >/dev/null; then
+    # checkupdates comes from pacman-contrib and builds a private copy of the
+    # sync database under fakeroot, so it is only usable when fakeroot is
+    # installed too — Omarchy Server 4.0.1 ships one without the other. The
+    # comparison has to be made against the source the tool would really use.
+    if command -v checkupdates >/dev/null && command -v fakeroot >/dev/null; then
       expected=$(checkupdates 2>/dev/null | grep -cE ' -> ')
       source="checkupdates"
     else
@@ -228,12 +234,19 @@ else
   fail=$((fail + 1))
 fi
 
-# 4. The restart classification is one of the three words, always. An empty
+# 4. The pending list was actually read. A count of zero is a legitimate
+#    answer on a freshly updated machine; a count of zero because the command
+#    failed is not, and the report says which. This is what a missing fakeroot
+#    on Omarchy Server 4.0.1 used to turn into an empty screen.
+check_report_absent "the pending list was read, not merely reported as zero" \
+  '"pendingError"'
+
+# 5. The restart classification is one of the three words, always. An empty
 #    one would mean the classifier neither ran nor fell back.
 check_report "the restart class is one of none/services/reboot" \
   '"restart": "(none|services|reboot)"'
 
-# 5. The snapshot answer agrees with the machine. A snapper root configuration
+# 6. The snapshot answer agrees with the machine. A snapper root configuration
 #    is the whole condition, and it is checkable from the shell.
 if [[ -e /etc/snapper/configs/root ]] && command -v snapper >/dev/null; then
   check "snapshot support is reported on a machine that has it" \
@@ -248,7 +261,7 @@ else
     '"snapshot": false'
 fi
 
-# 6. The timer state agrees with systemd, for the unit this manager ships.
+# 7. The timer state agrees with systemd, for the unit this manager ships.
 case "$manager" in
   pacman) unit=omarchy-server-update.timer ;;
   apt) unit=apt-daily-upgrade.timer ;;
@@ -263,7 +276,7 @@ else
   echo "SKIP  this machine declares no $unit to compare"
 fi
 
-# 7. The security count is only ever non-zero where the manager publishes the
+# 8. The security count is only ever non-zero where the manager publishes the
 #    metadata. On pacman a security flag would be an invention.
 if [[ "$manager" == "pacman" ]]; then
   check "pacman claims no security metadata it does not have" \
@@ -271,7 +284,7 @@ if [[ "$manager" == "pacman" ]]; then
     '"security": 0'
 fi
 
-# 8. --check must not refresh the manager's metadata. That is a privileged
+# 9. --check must not refresh the manager's metadata. That is a privileged
 #    write to a root-owned cache, and it is the one thing that would make the
 #    read path unusable as an ordinary user.
 #
@@ -299,14 +312,14 @@ else
   echo "SKIP  $cache does not exist on this machine"
 fi
 
-# 9. --check must never build or run a mutation, so it can never ask for a
+# 10. --check must never build or run a mutation, so it can never ask for a
 #    password. A prompt in its output means an escalation was attempted on a
 #    path that has no business escalating interactively.
 check_absent "--check never prompted for a password" \
   "$bin --check" \
   '\[sudo\] password for'
 
-# 10. And it changes nothing: the pending list is identical afterwards.
+# 11. And it changes nothing: the pending list is identical afterwards.
 case "$manager" in
   pacman) list_cmd="pacman -Qu" ;;
   apt) list_cmd="apt list --upgradable" ;;
@@ -324,7 +337,7 @@ else
   fail=$((fail + 1))
 fi
 
-# 11. Per-manager facts worth pinning, since each one is a claim the README
+# 12. Per-manager facts worth pinning, since each one is a claim the README
 #     makes on that distribution's behalf.
 case "$manager" in
   pacman)
@@ -333,9 +346,17 @@ case "$manager" in
         "$bin --check" \
         'omarchy-server-update'
     fi
-    check "the pacman log is readable, so the history screen has something" \
-      "test -r /var/log/pacman.log && echo readable" \
-      'readable'
+    # A machine built by installing into a chroot and then cleaned — which is
+    # how the Omarchy Server cloud image is made — has no pacman.log until its
+    # first upgrade. That is an empty history, not a broken read, so it is a
+    # skip rather than a failure.
+    if [[ -e /var/log/pacman.log ]]; then
+      check "the pacman log is readable, so the history screen has something" \
+        "test -r /var/log/pacman.log && echo readable" \
+        'readable'
+    else
+      echo "SKIP  this machine has no /var/log/pacman.log yet"
+    fi
     ;;
   apt)
     if [[ -e /var/run/reboot-required ]]; then
