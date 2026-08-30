@@ -9,14 +9,16 @@ import (
 	"github.com/tui-tools/tui-update/internal/updates"
 )
 
-// fixture reads a captured command output.
+// fixture reads one command's output.
 //
-// The dnf ones were captured on a real Fedora 42 host running dnf5, and the
-// pacman ones whose names end in a condition — no-fakeroot, no-sync-db,
-// dryrun-clean — on a real Omarchy Server 4.0.1 guest in the lab. The rest of
-// the apt and pacman set is written by hand against the documented line
-// shapes; every one of them is pinned by a test that names the shape it is
-// asserting.
+// Every fixture is synthetic: the line shapes are the ones the managers
+// document and print — column padding, epochs, the `[ignored]` marker, the
+// truncated command column of `dnf history list` — and the packages named in
+// them are ordinary system ones, so nothing here describes the machine a
+// fixture was first modelled on. The ones whose names end in a condition —
+// no-fakeroot, no-sync-db, dryrun-clean — reproduce a state the lab hit on an
+// Omarchy Server 4.0.1 guest. Every one of them is pinned by a test that names
+// the shape it is asserting.
 func fixture(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", name)) //nolint:gosec // the name is a literal in the tests, and testdata is in the repository
@@ -45,15 +47,19 @@ func TestParseDNFCheckUpdate(t *testing.T) {
 	if len(packages) != 10 {
 		t.Fatalf("parsed %d packages, want 10", len(packages))
 	}
-	code := find(t, packages, "code")
-	if code.Arch != "x86_64" || code.New != "1.135.0-1787669223.el8" ||
-		code.Repo != "code" {
-		t.Errorf("code = %+v", code)
+	ssh := find(t, packages, "openssh-server")
+	if ssh.Arch != "x86_64" || ssh.New != "9.9p1-6.fc42" ||
+		ssh.Repo != "updates-testing" {
+		t.Errorf("openssh-server = %+v", ssh)
+	}
+	// An architecture is not always a CPU one.
+	if tz := find(t, packages, "tzdata"); tz.Arch != "noarch" {
+		t.Errorf("tzdata arch = %q, want noarch", tz.Arch)
 	}
 	// The epoch is part of the version dnf prints and must survive.
-	modprobe := find(t, packages, "gpu-modprobe")
-	if modprobe.New != "3:590.48.01-1.fc42" {
-		t.Errorf("gpu-modprobe new = %q, want the epoch kept", modprobe.New)
+	vim := find(t, packages, "vim-enhanced")
+	if vim.New != "2:9.1.1450-1.fc42" {
+		t.Errorf("vim-enhanced new = %q, want the epoch kept", vim.New)
 	}
 }
 
@@ -61,16 +67,16 @@ func TestParseDNFCheckUpdate(t *testing.T) {
 // three-column shape ambiguous: dnf5 prints its errors on stdout, and an
 // error line has three space-separated fields too.
 func TestParseDNFCheckUpdateSkipsErrors(t *testing.T) {
-	out := "Error: Cache-only enabled but no cache for 'example-chat'\n" +
-		"gh.x86_64 2.98.0-1 gh-cli\n"
+	out := "Error: Cache-only enabled but no cache for 'tui-tools'\n" +
+		"tui-update.x86_64 0.3.0-1.fc42 tui-tools\n"
 	packages := ParseDNFCheckUpdate(out)
-	if len(packages) != 1 || packages[0].Name != "gh" {
-		t.Errorf("parsed %+v, want only gh", packages)
+	if len(packages) != 1 || packages[0].Name != "tui-update" {
+		t.Errorf("parsed %+v, want only tui-update", packages)
 	}
 }
 
 func TestParseDNFCheckUpdateStopsAtObsoleting(t *testing.T) {
-	out := "gh.x86_64 2.98.0-1 gh-cli\n\nObsoleting Packages\n" +
+	out := "tui-update.x86_64 0.3.0-1.fc42 tui-tools\n\nObsoleting Packages\n" +
 		"old-thing.x86_64 1.0-1 updates\n"
 	if packages := ParseDNFCheckUpdate(out); len(packages) != 1 {
 		t.Errorf("parsed %d packages, want the obsoleting section skipped",
@@ -80,10 +86,10 @@ func TestParseDNFCheckUpdateStopsAtObsoleting(t *testing.T) {
 
 func TestParseDNFSizes(t *testing.T) {
 	sizes := ParseDNFSizes(fixture(t, "dnf5-repoquery-upgrades.txt"))
-	if got := sizes["gh.x86_64"]; got != 15499377 {
-		t.Errorf("gh size = %d", got)
+	if got := sizes["tui-update.x86_64"]; got != 15499377 {
+		t.Errorf("tui-update size = %d", got)
 	}
-	if got := humanSize(sizes["gh.x86_64"]); got != "14.8 MiB" {
+	if got := humanSize(sizes["tui-update.x86_64"]); got != "14.8 MiB" {
 		t.Errorf("humanSize = %q", got)
 	}
 }
@@ -116,7 +122,7 @@ func TestParseDNFHistory(t *testing.T) {
 	if first.ID != "143" || first.When != "2026-06-19 16:49:43" {
 		t.Errorf("newest transaction = %+v", first)
 	}
-	if first.Command != "dnf install example-dkms" {
+	if first.Command != "dnf install tui-update" {
 		t.Errorf("command = %q", first.Command)
 	}
 	if got := ParseDNFHistory(fixture(t, "dnf-history-list.txt"), 3); len(got) != 3 {
@@ -138,7 +144,7 @@ func TestParseNeedsRestartingServices(t *testing.T) {
 }
 
 // TestNeedsRestartingRebootWording pins the sentence the dnf backend keys the
-// reboot verdict on, captured from this Fedora host.
+// reboot verdict on.
 func TestNeedsRestartingRebootWording(t *testing.T) {
 	none := fixture(t, "needs-restarting-r-none.txt")
 	if strings.Contains(none, "Reboot is required") {
@@ -287,9 +293,9 @@ func TestParsePacmanPending(t *testing.T) {
 
 func TestParsePacmanPendingIgnored(t *testing.T) {
 	packages := ParsePacmanPending(fixture(t, "pacman-qu.txt"))
-	nvidia := find(t, packages, "gpu-utils")
-	if !nvidia.Ignored {
-		t.Errorf("`[ignored]` was not recognised: %+v", nvidia)
+	ignored := find(t, packages, "tui-update")
+	if !ignored.Ignored {
+		t.Errorf("`[ignored]` was not recognised: %+v", ignored)
 	}
 }
 
