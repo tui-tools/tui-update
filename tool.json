@@ -28,7 +28,7 @@
       "caption": "The confirm dialog, carrying every command of the sequence before the first one runs"
     },
     {
-      "path": "docs/screenshots/tui-update-reboot.png",
+      "path": "docs/screenshots/tui-update-apply.png",
       "caption": "The reboot the upgrade asked for: offered afterwards, never taken by the tool itself"
     },
     {
