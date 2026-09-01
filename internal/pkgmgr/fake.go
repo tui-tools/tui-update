@@ -109,7 +109,7 @@ func (f *Fake) reset() {
 			Current: "1.27.4-1.fc42", New: "1.27.5-1.fc42",
 			Repo: "updates", Size: "1.6 MiB",
 			// Already held, so the sample machine shows both halves of the
-			// hold key: h lifts this one and places one on any other row.
+			// hold key: H lifts this one and places one on any other row.
 			Held: true,
 		},
 		{

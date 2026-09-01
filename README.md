@@ -277,13 +277,13 @@ capability is split in two in the code: `SecurityMetadata` (apt: yes) and
 `SecurityUpgrade` (apt: no). On pacman there is neither.
 
 The honest workaround on apt is the manager's own: hold the packages you do not
-want moved, with `h`, and run the plain upgrade.
+want moved, with `H`, and run the plain upgrade.
 
 ## Holding a package back
 
 ![The pending list](docs/screenshots/tui-update-main.png)
 
-`h` on a package row holds it at its installed version, or lifts a hold it
+`H` on a package row holds it at its installed version, or lifts a hold it
 already carries. Held rows are marked `·held` and greyed out, because a package
 nothing is going to upgrade should not look like one that is.
 
@@ -303,7 +303,7 @@ Two honest caveats:
 - **dnf's versionlock is a plugin**, and a minimal install does not carry it.
   Without it, `dnf versionlock add` fails with `No such command: versionlock`,
   which tells a reader nothing. So the plugin is detected when the pending list
-  is read, and `h` refuses up front, naming the package to install —
+  is read, and `H` refuses up front, naming the package to install —
   `python3-dnf-plugin-versionlock`, or `dnf-plugins-extras-versionlock` on RHEL
   and its rebuilds. `tui-update --demo --demo-no-versionlock` drives that exact
   machine, so the refusal can be seen without breaking a real one.
@@ -311,11 +311,11 @@ Two honest caveats:
   lock excludes it from the available set. So on dnf a lock you placed will
   usually not be on the list any more — which is `dnf versionlock list`'s job to
   answer, and lifting it is a `dnf versionlock delete` on the command line. On
-  apt a held package stays on the upgradable list, so `h` toggles it both ways
+  apt a held package stays on the upgradable list, so `H` toggles it both ways
   from the screen.
 - **pacman holds packages in `/etc/pacman.conf`** (`IgnorePkg`), which is a file
   to edit rather than a command to run. This tool does not edit configuration
-  files, so `h` says so there rather than inventing a command.
+  files, so `H` says so there rather than inventing a command.
 
 ## Every change is previewed
 
@@ -484,8 +484,8 @@ the reboot is this tool's user's decision.
 | `U` | Apply it, after confirming the whole sequence |
 | `m` | On the plan: cycle `upgrade`, `dist-upgrade` (apt) and `security` (dnf) |
 | `s` | On the plan: take the pre/post snapshot, or do not |
-| `h` | Hold the selected package at its version, or lift the hold |
-| `H` | The package manager's own transaction history |
+| `h` | The package manager's own transaction history |
+| `H` | Hold the selected package at its version, or lift the hold |
 | `t` | The unattended-update timers |
 | `e` / `d` | On the timers screen: enable / disable the unit |
 | `R` | Re-read; on a finished upgrade, offer the reboot |
@@ -527,7 +527,7 @@ the reboot is this tool's user's decision.
 
 - **No per-package upgrade.** The list is not a selection: it is what the
   manager would do, and the tool applies that whole or not at all. The way to
-  leave a package behind is to hold it, with `h`, and then upgrade.
+  leave a package behind is to hold it, with `H`, and then upgrade.
 - **No security-only upgrade on apt or pacman.** apt has no command that
   applies only the security updates, and the approximations are either
   dishonest or capable of rebooting the machine —

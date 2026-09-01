@@ -514,10 +514,10 @@ func (a *app) handlePendingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "U":
 		return a, a.openPlan(true)
 	case "h":
-		return a, a.confirmHold()
-	case "H":
 		a.mode, a.scroll, a.loading = modeHistory, 0, true
 		return a, a.loadHistory()
+	case "H":
+		return a, a.confirmHold()
 	case "t":
 		a.mode, a.timerCursor = modeTimers, 0
 	case "R", "ctrl+r":

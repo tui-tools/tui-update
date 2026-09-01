@@ -3,7 +3,7 @@
   "name": "tui-update",
   "binary": "tui-update",
   "tagline": "Pending package updates, what they restart, and a snapshot first",
-  "description": "A terminal UI for the updates waiting on your machine. It reads them from whichever package manager the machine runs — `pacman`, `apt` or `dnf` — and shows what a list of versions never tells you: what applying them will cost.\n\nEvery pending update is on one screen, with its current and new version, its repository, its size and its security flag where the manager publishes one, and the kernel and firmware sorted to the top.\n\n`enter` gives you the plan: the manager's own dry run, the restart classification — nothing, the services holding replaced code open, or a reboot with the reason — whether a `snapper` snapshot can be taken first, and the whole sequence in order.\n\n`U` applies it behind a confirm dialog carrying that sequence, streaming the output as it goes. It never reboots by itself: when the upgrade needs one it offers `R`, confirmed too.\n\nOn the plan, `m` cycles the upgrades the manager really has, security-only on dnf included, and `s` turns the snapshot pair off and on. On the list, `h` holds a package at its version, or lifts the hold.\n\nRun `tui-update --demo` to drive a sample machine: every key works, every command is previewed for real, and nothing touches your system.",
+  "description": "A terminal UI for the updates waiting on your machine. It reads them from whichever package manager the machine runs — `pacman`, `apt` or `dnf` — and shows what a list of versions never tells you: what applying them will cost.\n\nEvery pending update is on one screen, with its current and new version, its repository, its size and its security flag where the manager publishes one, and the kernel and firmware sorted to the top.\n\n`enter` gives you the plan: the manager's own dry run, the restart classification — nothing, the services holding replaced code open, or a reboot with the reason — whether a `snapper` snapshot can be taken first, and the whole sequence in order.\n\n`U` applies it behind a confirm dialog carrying that sequence, streaming the output as it goes. It never reboots by itself: when the upgrade needs one it offers `R`, confirmed too.\n\nOn the plan, `m` cycles the upgrades the manager really has, security-only on dnf included, and `s` turns the snapshot pair off and on. On the list, `H` holds a package at its version, or lifts the hold.\n\nRun `tui-update --demo` to drive a sample machine: every key works, every command is previewed for real, and nothing touches your system.",
   "category": "packages",
   "homepage": "https://github.com/tui-tools/tui-update",
   "repo": "https://github.com/tui-tools/tui-update",
@@ -59,11 +59,11 @@
     },
     {
       "key": "h",
-      "action": "Hold the selected package at its version, or lift the hold"
+      "action": "The package manager's own transaction history"
     },
     {
       "key": "H",
-      "action": "The package manager's own transaction history"
+      "action": "Hold the selected package at its version, or lift the hold"
     },
     {
       "key": "t",

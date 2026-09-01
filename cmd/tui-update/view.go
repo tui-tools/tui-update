@@ -465,8 +465,8 @@ func (a *app) shortHelpKeys() []ui.KeyHint {
 	return []ui.KeyHint{
 		{Key: "enter", Desc: "plan"},
 		{Key: "U", Desc: "upgrade"},
-		{Key: "h", Desc: "hold"},
-		{Key: "H", Desc: "history"},
+		{Key: "h", Desc: "history"},
+		{Key: "H", Desc: "hold"},
 		{Key: "t", Desc: "timers"},
 		{Key: "/", Desc: "filter"},
 		{Key: "R", Desc: "re-read"},
@@ -531,9 +531,9 @@ func helpKeys() []ui.KeyHint {
 		{Key: "m", Desc: "on the plan: cycle upgrade, dist-upgrade (apt) and " +
 			"security-only (dnf)"},
 		{Key: "s", Desc: "on the plan: take the pre/post snapshot, or do not"},
-		{Key: "h", Desc: "hold the selected package at its version, or lift " +
+		{Key: "h", Desc: "the package manager's own transaction history"},
+		{Key: "H", Desc: "hold the selected package at its version, or lift " +
 			"the hold"},
-		{Key: "H", Desc: "the package manager's own transaction history"},
 		{Key: "t", Desc: "the unattended-update timers, and enable/disable them"},
 		{Key: "e / d", Desc: "on the timers screen: enable / disable the unit"},
 		{Key: "R", Desc: "re-read; on a finished upgrade, offer the reboot"},

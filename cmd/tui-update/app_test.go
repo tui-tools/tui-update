@@ -83,7 +83,7 @@ func TestWidthsNeverOverflow(t *testing.T) {
 	}{
 		{"pending", nil},
 		{"plan", []string{"p"}},
-		{"history", []string{"H"}},
+		{"history", []string{"h"}},
 		{"timers", []string{"t"}},
 		{"help", []string{"?"}},
 	}
@@ -599,16 +599,16 @@ func TestSnapshotToggleIsRefusedWithNowhereToSnapshot(t *testing.T) {
 	}
 }
 
-// TestHoldIsPreviewedAndToggles: h holds the selected package and lifts a hold
+// TestHoldIsPreviewedAndToggles: H holds the selected package and lifts a hold
 // it already carries, both behind the same confirm dialog as everything else.
 func TestHoldIsPreviewedAndToggles(t *testing.T) {
 	a, fake := newTestApp(t, 120, 30)
 
 	// The sample machine holds nginx, so the key on that row lifts it.
 	a.cursor = indexOf(t, a, "nginx")
-	key(a, "h")
+	key(a, "H")
 	if a.mode != modeConfirm {
-		t.Fatalf("h did not open a confirm dialog (mode %v)", a.mode)
+		t.Fatalf("H did not open a confirm dialog (mode %v)", a.mode)
 	}
 	if a.confirm.Command != "sudo -n dnf versionlock delete nginx" {
 		t.Errorf("the dialog previews %q", a.confirm.Command)
@@ -630,7 +630,7 @@ func TestHoldIsPreviewedAndToggles(t *testing.T) {
 	}
 	send(a, loadedMsg{model: model})
 	a.cursor = indexOf(t, a, "vim-minimal")
-	key(a, "h")
+	key(a, "H")
 	if a.confirm.Command != "sudo -n dnf versionlock add vim-minimal" {
 		t.Errorf("the dialog previews %q", a.confirm.Command)
 	}
@@ -652,7 +652,7 @@ func TestHoldIsRefusedWithoutTheVersionlockPlugin(t *testing.T) {
 	}
 	send(a, loadedMsg{model: model})
 
-	key(a, "h")
+	key(a, "H")
 	if a.mode == modeConfirm {
 		t.Fatalf("a hold was previewed on a machine that cannot hold anything")
 	}
