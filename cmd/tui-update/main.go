@@ -37,12 +37,16 @@ func defaults() map[string]string {
 
 // options holds the parsed command line.
 type options struct {
-	demo        bool
-	check       bool
-	report      bool
-	themePath   string
-	sudo        string
-	showVersion bool
+	demo bool
+	// demoNoVersionlock drives the sample machine without the dnf versionlock
+	// plugin, which is the only way to see the hold key's refusal — and the
+	// package it names — without uninstalling a plugin on a real machine.
+	demoNoVersionlock bool
+	check             bool
+	report            bool
+	themePath         string
+	sudo              string
+	showVersion       bool
 	// sudoSet records whether -sudo was passed, so `--sudo ""` can disable
 	// escalation instead of reading as "not given".
 	sudoSet bool
@@ -55,6 +59,9 @@ func parseFlags(args []string, out *os.File) (options, error) {
 	fs.SetOutput(out)
 	fs.BoolVar(&opts.demo, "demo", false,
 		"run against a sample machine, without touching the real one")
+	fs.BoolVar(&opts.demoNoVersionlock, "demo-no-versionlock", false,
+		"with --demo, the sample machine has no dnf versionlock plugin, so "+
+			"holding a package is refused with the package to install")
 	fs.BoolVar(&opts.check, "check", false,
 		"read the pending updates and print the result as JSON, then exit "+
 			"(no UI, no changes); exit 1 if the manager cannot be read")
@@ -185,6 +192,9 @@ func detectManager(demo bool) string {
 func pickBackend(cfg config.Config, opts options,
 	backendCompat compat.Result) (updates.Backend, error) {
 	if opts.demo {
+		if opts.demoNoVersionlock {
+			return pkgmgr.NewFakeWithoutVersionlock(), nil
+		}
 		return pkgmgr.NewFake(), nil
 	}
 	return pkgmgr.NewReal(cfg.SudoPrefix(), backendCompat.Caps())

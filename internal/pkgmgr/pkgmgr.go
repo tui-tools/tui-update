@@ -100,6 +100,9 @@ type Real struct {
 	// noCheckupdates explains, on pacman, why `checkupdates` cannot be used
 	// here. It is empty when it can be.
 	noCheckupdates string
+	// hold is what the last Load found about pinning packages here, kept so
+	// BuildHold can refuse before building a command that would fail.
+	hold updates.HoldSupport
 }
 
 // NewReal locates the binaries and, when not running as root, validates the
@@ -126,7 +129,7 @@ func NewReal(sudoPrefix []string, caps compat.Caps) (*Real, error) {
 	// one only when it is asked to change something.
 	unprivileged := false
 	for _, bin := range []string{
-		"pacman", "checkupdates", "apt", "apt-get", "dnf", "rpm",
+		"pacman", "checkupdates", "apt", "apt-get", "apt-mark", "dnf", "rpm",
 		"systemctl", "snapper", OmarchyUpdate,
 	} {
 		real.add(bin, sudoPrefix, &unprivileged)
@@ -235,10 +238,14 @@ func CapabilitiesFor(manager string) updates.Capabilities {
 	}
 	switch manager {
 	case updates.ManagerAPT:
+		// apt knows which updates are security updates — the pocket says so —
+		// and still has no upgrade that applies only those. SecurityUpgrade
+		// stays false here on purpose; the README says why at length.
 		caps.SecurityMetadata = true
 		caps.DistUpgrade = true
 	case updates.ManagerDNF:
 		caps.SecurityMetadata = true
+		caps.SecurityUpgrade = true
 		caps.PerPackageSize = true
 	}
 	return caps
@@ -383,8 +390,82 @@ func (r *Real) Load(ctx context.Context) (updates.Model, error) {
 	model.Restart = MergeRestart(ClassifyFromPackages(pending), r.probeRestart(ctx))
 	model.Snapshot = r.loadSnapshot(ctx)
 	model.Timers = r.loadTimers(ctx)
+
+	holds, support := r.loadHolds(ctx)
+	model.Hold = support
+	r.hold = support
+	for i := range model.Pending {
+		model.Pending[i].Held = holds[model.Pending[i].Name]
+	}
+
 	model.Notes = append(notes, r.notes()...)
 	return model, nil
+}
+
+// loadHolds reads which packages this machine has pinned, and decides whether
+// pinning is possible here at all.
+//
+// The two answers come from one read on purpose. On dnf the same call that
+// lists the locks is what proves the versionlock plugin is installed: asking
+// for the list is how the plugin's absence is discovered, and discovering it
+// here is what lets the hold key refuse with the package name to install
+// instead of letting `dnf versionlock add` fail in front of the user with a
+// message about an unknown command.
+func (r *Real) loadHolds(ctx context.Context) (map[string]bool, updates.HoldSupport) {
+	cmd, ok := BuildHoldsRead(r.manager)
+	if !ok {
+		return nil, updates.HoldSupport{
+			Reason: r.manager + " has no command that pins a package at a " +
+				"version; on Arch that is the IgnorePkg line of " +
+				"/etc/pacman.conf, which is a file to edit rather than a " +
+				"command to run",
+		}
+	}
+	if !r.has(cmd.Argv[0]) {
+		return nil, updates.HoldSupport{
+			Reason: cmd.Argv[0] + " is not installed, so no package can be held",
+		}
+	}
+
+	out, err := r.read(ctx, cmd)
+	if r.manager == updates.ManagerDNF && VersionlockMissing(out, err) {
+		pkg := VersionlockPackage(r.distro)
+		return nil, updates.HoldSupport{
+			Reason: "the dnf versionlock plugin is not installed, so this " +
+				"machine has no way to pin a package at a version",
+			Hint: "install " + pkg,
+		}
+	}
+	if err != nil && strings.TrimSpace(out) == "" {
+		return nil, updates.HoldSupport{
+			Reason: "the held packages could not be read (" +
+				runner.FirstLine(err.Error()) + ")",
+		}
+	}
+
+	holds := map[string]bool{}
+	switch r.manager {
+	case updates.ManagerAPT:
+		holds = ParseAPTHolds(out)
+	case updates.ManagerDNF:
+		holds = ParseDNFVersionlock(out)
+	}
+	return holds, updates.HoldSupport{
+		Available: true,
+		Reason:    holdReason(r.manager),
+	}
+}
+
+// holdReason is the one line the plan and the confirm dialog use to say how a
+// hold is really made on this manager.
+func holdReason(manager string) string {
+	if manager == updates.ManagerAPT {
+		return "held with `apt-mark hold`, which is the dpkg selection every " +
+			"apt front end honours"
+	}
+	return "locked with `dnf versionlock`, which excludes the package from " +
+		"the available set — so a locked package stops appearing in the " +
+		"pending list at all"
 }
 
 // errUnknownManager is the one pending-list failure that is not about the
@@ -849,7 +930,7 @@ func (r *Real) readTimer(ctx context.Context, timer updates.Timer) updates.Timer
 // the change; the refresh is in the sequence rather than in the read path
 // because it writes to a root-owned cache; and nothing reboots, ever — the
 // reboot is offered afterwards as its own confirmed command.
-func (r *Real) Plan(ctx context.Context, mode string) (updates.Plan, error) {
+func (r *Real) Plan(ctx context.Context, opts updates.PlanOptions) (updates.Plan, error) {
 	model, err := r.Load(ctx)
 	if err != nil {
 		return updates.Plan{}, err
@@ -859,53 +940,115 @@ func (r *Real) Plan(ctx context.Context, mode string) (updates.Plan, error) {
 			"pkgmgr: the pending list could not be read, so there is nothing to "+
 				"plan from: %s", model.PendingError)
 	}
-	if len(model.Pending) == 0 {
-		return updates.Plan{}, fmt.Errorf("pkgmgr: there is nothing to upgrade")
-	}
-
-	plan := updates.Plan{
-		Title:    planTitle(r.manager, mode, len(model.Pending), model.SecurityCount),
-		Restart:  model.Restart,
-		Snapshot: model.Snapshot,
-	}
-
-	if model.Snapshot.Available {
-		plan.Commands = append(plan.Commands, model.Snapshot.Pre)
-	}
-	if refresh, ok := BuildRefresh(r.manager); ok {
-		plan.Commands = append(plan.Commands, refresh)
-	}
-	upgrade, err := BuildUpgrade(r.manager, mode, r.omarchy)
-	if err != nil {
+	if err := planAllowed(opts.Mode, len(model.Pending),
+		model.SecurityCount); err != nil {
 		return updates.Plan{}, err
 	}
+
+	plan := assemblePlan(r.manager, opts, model, r.omarchy)
+	if plan.Error != nil {
+		return updates.Plan{}, plan.Error
+	}
+	plan.Plan.DryRun, plan.Plan.Notes = r.dryRun(ctx, opts.Mode, model)
+	return withPlanNotes(plan.Plan, opts, model), nil
+}
+
+// planAllowed refuses a plan there is nothing to build. A mode nobody can act
+// on is refused here rather than producing a command that would upgrade
+// everything, which is the failure worth being loud about: a reader who asked
+// for the security fixes must never be handed the full upgrade instead.
+func planAllowed(mode string, pending, security int) error {
+	if pending == 0 {
+		return fmt.Errorf("pkgmgr: there is nothing to upgrade")
+	}
+	if mode == updates.UpgradeSecurity && security == 0 {
+		return fmt.Errorf("pkgmgr: nothing pending here is a security fix, " +
+			"so a security-only upgrade would do nothing")
+	}
+	return nil
+}
+
+// builtPlan is the assembled sequence, or the reason it could not be built.
+type builtPlan struct {
+	Plan  updates.Plan
+	Error error
+}
+
+// assemblePlan builds the command sequence, and is shared by the real backend
+// and the demo one so --demo produces the very same order: snapshot, refresh,
+// upgrade, snapshot, and never a reboot.
+func assemblePlan(manager string, opts updates.PlanOptions,
+	model updates.Model, omarchy bool) builtPlan {
+	take := opts.Snapshot && model.Snapshot.Available
+	plan := updates.Plan{
+		Title: planTitle(manager, opts.Mode, len(model.Pending),
+			model.SecurityCount),
+		Mode:         opts.Mode,
+		Restart:      model.Restart,
+		Snapshot:     model.Snapshot,
+		TakeSnapshot: take,
+	}
+	if take {
+		plan.Commands = append(plan.Commands, model.Snapshot.Pre)
+	}
+	if refresh, ok := BuildRefresh(manager); ok {
+		plan.Commands = append(plan.Commands, refresh)
+	}
+	upgrade, err := BuildUpgrade(manager, opts.Mode, omarchy)
+	if err != nil {
+		return builtPlan{Error: err}
+	}
 	plan.Commands = append(plan.Commands, upgrade)
-	if model.Snapshot.Available {
+	if take {
 		plan.Commands = append(plan.Commands, model.Snapshot.Post)
 	}
+	return builtPlan{Plan: plan}
+}
 
-	plan.DryRun, plan.Notes = r.dryRun(ctx, mode, model)
-	if !model.Snapshot.Available {
+// withPlanNotes adds the caveats that apply to a plan however it was built.
+func withPlanNotes(plan updates.Plan, opts updates.PlanOptions,
+	model updates.Model) updates.Plan {
+	switch {
+	case !model.Snapshot.Available:
 		plan.Notes = append(plan.Notes, "no snapshot: "+model.Snapshot.Reason)
+	case !opts.Snapshot:
+		plan.Notes = append(plan.Notes, "the snapshot was turned off for this "+
+			"plan (s turns it back on); this machine could take one")
+	}
+	if opts.Mode == updates.UpgradeSecurity {
+		plan.Notes = append(plan.Notes, "security-only: the manager resolves "+
+			"the advisories, so packages with no advisory of their own can "+
+			"still be pulled in as dependencies")
 	}
 	if model.Restart.Detail != "" {
 		plan.Notes = append(plan.Notes, model.Restart.Detail)
 	}
+	// The model's own notes come last, so the caveats specific to this plan
+	// are the ones read first.
 	plan.Notes = append(plan.Notes, model.Notes...)
-	return plan, nil
+	return plan
 }
 
 // planTitle is the one line the confirm dialog is headed with.
 func planTitle(manager, mode string, pending, security int) string {
-	verb := "Upgrade"
-	if mode == updates.UpgradeDist {
-		verb = "Dist-upgrade"
+	switch mode {
+	case updates.UpgradeDist:
+		title := fmt.Sprintf("Dist-upgrade %d package(s) with %s", pending, manager)
+		if security > 0 {
+			title += fmt.Sprintf(", %d of them security fixes", security)
+		}
+		return title
+	case updates.UpgradeSecurity:
+		return fmt.Sprintf(
+			"Upgrade the %d security fix(es) of %d pending with %s",
+			security, pending, manager)
+	default:
+		title := fmt.Sprintf("Upgrade %d package(s) with %s", pending, manager)
+		if security > 0 {
+			title += fmt.Sprintf(", %d of them security fixes", security)
+		}
+		return title
 	}
-	title := fmt.Sprintf("%s %d package(s) with %s", verb, pending, manager)
-	if security > 0 {
-		title += fmt.Sprintf(", %d of them security fixes", security)
-	}
-	return title
 }
 
 // dryRun asks the manager to say what it would do.
@@ -993,6 +1136,35 @@ func readLog(path string) (string, error) {
 // BuildTimerAction enables or disables an unattended-update unit.
 func (r *Real) BuildTimerAction(action, unit string) (updates.Command, error) {
 	return BuildTimerAction(action, unit)
+}
+
+// BuildHold pins a package at its installed version, or lifts that pin.
+//
+// The refusal is made here rather than left to the command: a machine without
+// the dnf versionlock plugin would otherwise be handed a `dnf versionlock add`
+// that fails complaining about an unknown command, which names neither the
+// plugin nor the package that carries it.
+func (r *Real) BuildHold(action, name string) (updates.Command, error) {
+	if err := holdRefusal(r.hold); err != nil {
+		return updates.Command{}, err
+	}
+	return BuildHold(r.manager, action, name)
+}
+
+// holdRefusal turns an unavailable hold into the sentence the status line
+// shows, hint included.
+func holdRefusal(support updates.HoldSupport) error {
+	if support.Available {
+		return nil
+	}
+	message := support.Reason
+	if message == "" {
+		message = "this machine cannot hold a package at a version"
+	}
+	if support.Hint != "" {
+		message += " — " + support.Hint
+	}
+	return fmt.Errorf("pkgmgr: %s", message)
 }
 
 // BuildReboot is the reboot the tool offers and never takes by itself.

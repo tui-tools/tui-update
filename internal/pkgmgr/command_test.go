@@ -1,6 +1,7 @@
 package pkgmgr
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -61,7 +62,26 @@ func TestArgvTable(t *testing.T) {
 			updates.UpgradeDefault), "dnf upgrade --assumeno --cacheonly"},
 		{"dnf upgrade", must(BuildUpgrade(updates.ManagerDNF,
 			updates.UpgradeDefault, false)), "dnf -y upgrade"},
+		{"dnf security upgrade", must(BuildUpgrade(updates.ManagerDNF,
+			updates.UpgradeSecurity, false)), "dnf -y upgrade --security"},
+		{"dnf security simulate", mustSimulate(t, updates.ManagerDNF,
+			updates.UpgradeSecurity),
+			"dnf upgrade --security --assumeno --cacheonly"},
 		{"dnf history", BuildHistoryDNF(), "dnf history list -q"},
+		{"dnf versionlock list", mustHoldsRead(t, updates.ManagerDNF),
+			"dnf versionlock list -q --cacheonly"},
+		{"dnf versionlock add", must(BuildHold(updates.ManagerDNF,
+			updates.HoldAdd, "kernel")), "dnf versionlock add kernel"},
+		{"dnf versionlock delete", must(BuildHold(updates.ManagerDNF,
+			updates.HoldRemove, "kernel")), "dnf versionlock delete kernel"},
+
+		// holds
+		{"apt showhold", mustHoldsRead(t, updates.ManagerAPT),
+			"apt-mark showhold"},
+		{"apt hold", must(BuildHold(updates.ManagerAPT, updates.HoldAdd,
+			"linux-image-amd64")), "apt-mark hold linux-image-amd64"},
+		{"apt unhold", must(BuildHold(updates.ManagerAPT, updates.HoldRemove,
+			"linux-image-amd64")), "apt-mark unhold linux-image-amd64"},
 		{"needs-restarting services",
 			must(BuildRestartProbe("needs-restarting-services")),
 			"needs-restarting -s"},
@@ -397,4 +417,193 @@ func mustSimulate(t *testing.T, manager, mode string) updates.Command {
 		t.Fatalf("%s has no simulation", manager)
 	}
 	return cmd
+}
+
+func mustHoldsRead(t *testing.T, manager string) updates.Command {
+	t.Helper()
+	cmd, ok := BuildHoldsRead(manager)
+	if !ok {
+		t.Fatalf("%s has no way to list held packages", manager)
+	}
+	return cmd
+}
+
+// TestSecurityUpgradeExistsOnlyWhereItIsReal is the honest half of the
+// security-only feature.
+//
+// dnf narrows the very same transaction with `--security`, which is exact.
+// apt has no such flag: the closest thing is `unattended-upgrade`, which
+// applies whatever Unattended-Upgrade::Allowed-Origins is set to — on Debian
+// the shipped default includes the plain stable archive as well as the
+// security one — and which can reboot the machine on its own. Neither is the
+// promise "only the security fixes", so apt is refused rather than
+// approximated, and pacman publishes no security metadata to narrow by at all.
+func TestSecurityUpgradeExistsOnlyWhereItIsReal(t *testing.T) {
+	if !CapabilitiesFor(updates.ManagerDNF).SecurityUpgrade {
+		t.Errorf("dnf upgrades only the advisories with --security")
+	}
+	for _, manager := range []string{updates.ManagerAPT, updates.ManagerPacman} {
+		if CapabilitiesFor(manager).SecurityUpgrade {
+			t.Errorf("%s has no exact security-only upgrade", manager)
+		}
+		if _, err := BuildUpgrade(manager, updates.UpgradeSecurity,
+			false); err == nil {
+			t.Errorf("%s built a security-only upgrade", manager)
+		}
+	}
+	// apt still knows which updates are security updates: the two claims are
+	// deliberately separate.
+	if !CapabilitiesFor(updates.ManagerAPT).SecurityMetadata {
+		t.Errorf("apt publishes a security pocket, so the column is not n/a")
+	}
+	// And on dnf the flag is the same word in the list and in the upgrade, so
+	// the column and the mode cannot mean different things.
+	if !strings.Contains(BuildSecurityDNF().String(), dnfSecurity) ||
+		!strings.Contains(must(BuildUpgrade(updates.ManagerDNF,
+			updates.UpgradeSecurity, false)).String(), dnfSecurity) {
+		t.Errorf("the security flag drifted between the list and the upgrade")
+	}
+}
+
+// TestPlanAllowed pins the two plans that must never be built: one on a
+// machine with nothing pending, and one that would silently upgrade
+// everything because there was no security fix to narrow to.
+func TestPlanAllowed(t *testing.T) {
+	tests := []struct {
+		name             string
+		mode             string
+		pending, secured int
+		wantErr          bool
+	}{
+		{"a plain upgrade with something to do", updates.UpgradeDefault, 5, 0, false},
+		{"a plain upgrade with nothing to do", updates.UpgradeDefault, 0, 0, true},
+		{"security-only with a fix pending", updates.UpgradeSecurity, 5, 2, false},
+		{"security-only with no fix pending", updates.UpgradeSecurity, 5, 0, true},
+		{"security-only on an empty machine", updates.UpgradeSecurity, 0, 0, true},
+	}
+	for _, test := range tests {
+		err := planAllowed(test.mode, test.pending, test.secured)
+		if (err != nil) != test.wantErr {
+			t.Errorf("%s: err = %v, wantErr %v", test.name, err, test.wantErr)
+		}
+	}
+}
+
+// TestHoldRejects: the package name reaches an argv, and the action decides
+// which way the machine moves.
+func TestHoldRejects(t *testing.T) {
+	for _, name := range []string{"", "nginx; reboot", "../etc", "a b"} {
+		if _, err := BuildHold(updates.ManagerAPT, updates.HoldAdd, name); err == nil {
+			t.Errorf("BuildHold accepted the name %q", name)
+		}
+	}
+	if _, err := BuildHold(updates.ManagerDNF, "pin", "nginx"); err == nil {
+		t.Errorf("BuildHold accepted an unknown action")
+	}
+	if _, err := BuildHold(updates.ManagerPacman, updates.HoldAdd,
+		"linux"); err == nil {
+		t.Errorf("pacman holds packages through /etc/pacman.conf, not a command")
+	}
+	if _, ok := BuildHoldsRead(updates.ManagerPacman); ok {
+		t.Errorf("pacman has no command that lists held packages")
+	}
+}
+
+// TestHoldIsTheDestructiveHalf: placing a hold stops a package receiving
+// security fixes, and lifting one only restores the normal state.
+func TestHoldIsTheDestructiveHalf(t *testing.T) {
+	for _, manager := range []string{updates.ManagerAPT, updates.ManagerDNF} {
+		if !must(BuildHold(manager, updates.HoldAdd, "nginx")).Destructive {
+			t.Errorf("%s: holding a package is the change worth confirming",
+				manager)
+		}
+		if must(BuildHold(manager, updates.HoldRemove, "nginx")).Destructive {
+			t.Errorf("%s: lifting a hold restores the normal state", manager)
+		}
+		if cmd, _ := BuildHoldsRead(manager); cmd.Destructive {
+			t.Errorf("%s: listing the holds is a read", manager)
+		}
+	}
+}
+
+// TestHoldRefusalNamesThePackageToInstall is why the versionlock plugin is
+// detected rather than discovered by a command failing: the refusal has to be
+// actionable.
+func TestHoldRefusalNamesThePackageToInstall(t *testing.T) {
+	err := holdRefusal(updates.HoldSupport{
+		Reason: "the dnf versionlock plugin is not installed",
+		Hint:   "install " + VersionlockPackage("fedora"),
+	})
+	if err == nil {
+		t.Fatalf("an unavailable hold was allowed")
+	}
+	if !strings.Contains(err.Error(), VersionlockFedora) {
+		t.Errorf("the refusal does not say what to install: %v", err)
+	}
+	if holdRefusal(updates.HoldSupport{Available: true}) != nil {
+		t.Errorf("a machine that can hold packages was refused")
+	}
+
+	// The enterprise rebuilds carry it under a different name.
+	for distro, want := range map[string]string{
+		"fedora": VersionlockFedora, "": VersionlockFedora,
+		"rhel": VersionlockEL, "Rocky": VersionlockEL, "almalinux": VersionlockEL,
+	} {
+		if got := VersionlockPackage(distro); got != want {
+			t.Errorf("VersionlockPackage(%q) = %q, want %q", distro, got, want)
+		}
+	}
+}
+
+// TestVersionlockMissingIsRecognised on both dnf generations' wording.
+func TestVersionlockMissingIsRecognised(t *testing.T) {
+	missing := []string{
+		"No such command: versionlock. Please use /usr/bin/dnf --help",
+		"Unknown argument \"versionlock\" for command \"dnf5\"",
+		"invalid choice: 'versionlock'",
+	}
+	for _, out := range missing {
+		if !VersionlockMissing(out, fmt.Errorf("exit status 1")) {
+			t.Errorf("not recognised as a missing plugin: %q", out)
+		}
+	}
+	// A plugin that is installed and simply printed nothing is not missing.
+	if VersionlockMissing("", nil) {
+		t.Errorf("an empty lock list is not a missing plugin")
+	}
+	if VersionlockMissing("Error: Failed to resolve the transaction",
+		fmt.Errorf("exit status 1")) {
+		t.Errorf("an unrelated dnf failure was read as a missing plugin")
+	}
+}
+
+// TestParseHolds reads both managers' hold lists.
+func TestParseHolds(t *testing.T) {
+	apt := ParseAPTHolds("linux-image-amd64\nnginx\n\n")
+	if len(apt) != 2 || !apt["nginx"] || !apt["linux-image-amd64"] {
+		t.Errorf("apt-mark showhold parsed as %v", apt)
+	}
+	// apt-mark prints a line of prose when there is nothing held.
+	if got := ParseAPTHolds("no packages are held\n"); len(got) != 0 {
+		t.Errorf("a prose line was read as a package: %v", got)
+	}
+
+	dnf := ParseDNFVersionlock(strings.Join([]string{
+		"# a comment the plugin wrote",
+		"glibc-0:2.41-4.fc42.*",
+		"kernel-6.14.9-300.fc42.*",
+		"nginx",
+		"python3-dnf-plugin-versionlock.noarch",
+		"",
+	}, "\n"))
+	for _, want := range []string{
+		"glibc", "kernel", "nginx", "python3-dnf-plugin-versionlock",
+	} {
+		if !dnf[want] {
+			t.Errorf("versionlock list did not yield %q: %v", want, dnf)
+		}
+	}
+	if len(dnf) != 4 {
+		t.Errorf("versionlock list yielded %v", dnf)
+	}
 }

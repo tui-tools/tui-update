@@ -1,0 +1,4 @@
+linux-image-amd64
+linux-image-6.1.0-28-amd64
+nginx
+openssh-server

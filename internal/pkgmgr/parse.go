@@ -688,6 +688,103 @@ func ParseSnapperConfigs(out string) []string {
 	return configs
 }
 
+// ---------------------------------------------------------------- holds ---
+
+// ParseAPTHolds reads `apt-mark showhold`, which prints one package name per
+// line and nothing else.
+// A line that is not a package name is dropped rather than kept: apt-mark
+// prints prose when nothing is held, and a name from here goes straight into
+// `apt-mark hold <name>`, so the same rule that guards every other argv guards
+// this one.
+func ParseAPTHolds(out string) map[string]bool {
+	holds := map[string]bool{}
+	for _, line := range splitLines(out) {
+		name := strings.TrimSpace(line)
+		if checkPackageName(name) != nil {
+			continue
+		}
+		holds[name] = true
+	}
+	return holds
+}
+
+// versionlockEntryRe splits a versionlock entry into the package name and the
+// version it is pinned to.
+//
+// The entries are the specs the plugin writes into its own configuration, and
+// what they look like depends on how the lock was made:
+//
+//	glibc-0:2.41-4.fc42.*     added from an installed package
+//	kernel-6.14.9-300.fc42.*  the same without an epoch
+//	nginx                     a whole-package exclusion
+//
+// The name is everything up to the last hyphen that starts a version, which is
+// the one rule that holds across all three: a package name may contain
+// hyphens, and a version always begins with a digit or with `<epoch>:`.
+var versionlockEntryRe = regexp.MustCompile(`^(.+?)-(?:[0-9]+:)?[0-9][^-]*(?:-.*)?$`)
+
+// ParseDNFVersionlock reads `dnf versionlock list`, returning the package
+// names that are pinned.
+//
+// The versions are dropped on purpose: what the pending screen marks is that a
+// package is held, and which version it is held at is the manager's business.
+func ParseDNFVersionlock(out string) map[string]bool {
+	holds := map[string]bool{}
+	for _, line := range splitLines(out) {
+		entry := strings.TrimSpace(line)
+		// The plugin comments its own file, and dnf prefixes a warning or two
+		// on a machine with an unreachable repository.
+		if entry == "" || strings.HasPrefix(entry, "#") {
+			continue
+		}
+		entry = strings.TrimSuffix(entry, ".*")
+		name := entry
+		if match := versionlockEntryRe.FindStringSubmatch(entry); match != nil {
+			name = match[1]
+		}
+		name = withoutArch(name)
+		// The name goes into `dnf versionlock delete <name>`, so anything that
+		// is not a package name is dropped rather than carried into an argv.
+		if checkPackageName(name) == nil {
+			holds[name] = true
+		}
+	}
+	return holds
+}
+
+// rpmArches are the architecture suffixes a versionlock entry can carry on a
+// whole-package exclusion, which names no version to strip them off with.
+var rpmArches = []string{
+	".x86_64", ".aarch64", ".noarch", ".i686", ".armv7hl", ".ppc64le", ".s390x",
+	".src",
+}
+
+// withoutArch drops the architecture suffix of a package name, so a hold
+// matches the pending list, which keeps the name and the architecture apart.
+func withoutArch(name string) string {
+	for _, arch := range rpmArches {
+		if strings.HasSuffix(name, arch) {
+			return strings.TrimSuffix(name, arch)
+		}
+	}
+	return name
+}
+
+// VersionlockMissing recognises dnf refusing a subcommand it has no plugin
+// for. dnf4 answers "No such command: versionlock" and dnf5 complains about an
+// unknown argument; neither of them says what to install, which is the whole
+// reason this is detected rather than left to fail in front of the user.
+func VersionlockMissing(out string, err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(out + " " + err.Error())
+	return strings.Contains(text, "no such command") ||
+		strings.Contains(text, "unknown argument") ||
+		strings.Contains(text, "invalid choice") ||
+		strings.Contains(text, "unknown command")
+}
+
 // humanSize renders a byte count the way a package manager would.
 func humanSize(bytes int64) string {
 	const unit = 1024

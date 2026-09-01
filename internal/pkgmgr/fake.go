@@ -25,13 +25,28 @@ const demoManager = updates.ManagerDNF
 type Fake struct {
 	model updates.Model
 	run   *runner.Fake
+	// versionlock reports that the sample machine carries the dnf plugin that
+	// pins a package at a version. It is a field rather than a constant so the
+	// machine without it — where holding a package is refused with the name of
+	// the package to install — is as demonstrable as the one with it.
+	versionlock bool
 }
 
 // NewFake builds the sample machine: fourteen pending updates including a
 // kernel and an openssl security fix, a reboot already required, two services
-// holding old code open, and a snapper root configuration to snapshot into.
-func NewFake() *Fake {
-	f := &Fake{}
+// holding old code open, a snapper root configuration to snapshot into, one
+// package already held, and the dnf versionlock plugin installed.
+func NewFake() *Fake { return newFake(true) }
+
+// NewFakeWithoutVersionlock is the same sample machine with the dnf
+// versionlock plugin missing, which is what `--demo-no-versionlock` drives.
+// Every other key behaves identically; holding a package is refused, naming
+// the package that would fix it.
+func NewFakeWithoutVersionlock() *Fake { return newFake(false) }
+
+// newFake builds the sample machine in one of its two hold configurations.
+func newFake(versionlock bool) *Fake {
+	f := &Fake{versionlock: versionlock}
 	f.run = &runner.Fake{Prefix: "sudo -n", Hook: f.apply}
 	f.reset()
 	return f
@@ -93,6 +108,9 @@ func (f *Fake) reset() {
 			Name: "nginx", Arch: "x86_64",
 			Current: "1.27.4-1.fc42", New: "1.27.5-1.fc42",
 			Repo: "updates", Size: "1.6 MiB",
+			// Already held, so the sample machine shows both halves of the
+			// hold key: h lifts this one and places one on any other row.
+			Held: true,
 		},
 		{
 			Name: "openssh-server", Arch: "x86_64",
@@ -148,9 +166,28 @@ func (f *Fake) reset() {
 			State:       "disabled",
 			Description: "dnf's automatic upgrade timer",
 		}},
+		Hold: f.holdSupport(),
 		Notes: []string{
 			"this is the sample machine: nothing here touches your system",
 		},
+	}
+}
+
+// holdSupport is the sample machine's answer about pinning a package, in both
+// of its configurations. The unavailable one carries the same hint the real
+// backend builds, so the refusal a reader sees in --demo is the refusal they
+// would see on their own Fedora box.
+func (f *Fake) holdSupport() updates.HoldSupport {
+	if f.versionlock {
+		return updates.HoldSupport{
+			Available: true,
+			Reason:    holdReason(demoManager),
+		}
+	}
+	return updates.HoldSupport{
+		Reason: "the dnf versionlock plugin is not installed, so this " +
+			"machine has no way to pin a package at a version",
+		Hint: "install " + VersionlockPackage("fedora"),
 	}
 }
 
@@ -192,28 +229,29 @@ func (f *Fake) History(_ context.Context) ([]updates.Transaction, error) {
 
 // Plan assembles the same sequence the real backend would, against the sample
 // machine.
-func (f *Fake) Plan(_ context.Context, mode string) (updates.Plan, error) {
-	if len(f.model.Pending) == 0 {
-		return updates.Plan{}, fmt.Errorf("pkgmgr: there is nothing to upgrade")
-	}
-	plan := updates.Plan{
-		Title: planTitle(demoManager, mode, len(f.model.Pending),
-			f.model.SecurityCount),
-		Restart:  f.model.Restart,
-		Snapshot: f.model.Snapshot,
-		DryRun:   pendingAsText(f.model.Pending),
-	}
-	plan.Commands = append(plan.Commands, f.model.Snapshot.Pre)
-	if refresh, ok := BuildRefresh(demoManager); ok {
-		plan.Commands = append(plan.Commands, refresh)
-	}
-	upgrade, err := BuildUpgrade(demoManager, mode, false)
-	if err != nil {
+func (f *Fake) Plan(_ context.Context, opts updates.PlanOptions) (updates.Plan, error) {
+	if err := planAllowed(opts.Mode, len(f.model.Pending),
+		f.model.SecurityCount); err != nil {
 		return updates.Plan{}, err
 	}
-	plan.Commands = append(plan.Commands, upgrade, f.model.Snapshot.Post)
-	plan.Notes = append(plan.Notes, f.model.Notes...)
-	return plan, nil
+	built := assemblePlan(demoManager, opts, f.model, false)
+	if built.Error != nil {
+		return updates.Plan{}, built.Error
+	}
+	plan := built.Plan
+	plan.DryRun = pendingAsText(f.demoDryRun(opts.Mode))
+	return withPlanNotes(plan, opts, f.model), nil
+}
+
+// demoDryRun is the package list the sample machine's simulation would print:
+// the security fixes alone in the security mode, everything otherwise. It is
+// what makes the mode key visibly change the plan in --demo rather than only
+// changing one word of the title.
+func (f *Fake) demoDryRun(mode string) []updates.Package {
+	if mode != updates.UpgradeSecurity {
+		return f.model.Pending
+	}
+	return f.model.Security()
 }
 
 // Run records the command and applies its effect to the sample machine.
@@ -234,10 +272,9 @@ func (f *Fake) apply(cmd updates.Command) (string, error) {
 	}
 	switch {
 	case argv[0] == "dnf" && argv[1] == "-y":
-		count := len(f.model.Pending)
-		f.model.Pending, f.model.SecurityCount = nil, 0
-		f.model.Restart.Services = nil
-		return fmt.Sprintf("Upgraded %d packages. Complete!", count), nil
+		return f.applyUpgrade(argv), nil
+	case argv[0] == "dnf" && argv[1] == "versionlock":
+		return f.applyVersionlock(argv)
 	case argv[0] == "dnf" && argv[1] == "makecache":
 		return "Metadata cache created.", nil
 	case argv[0] == "snapper" && argv[1] == "create":
@@ -247,6 +284,61 @@ func (f *Fake) apply(cmd updates.Command) (string, error) {
 	default:
 		return "ok", nil
 	}
+}
+
+// applyUpgrade empties the pending list, or only its security half when the
+// argv carried --security. A held package survives either one: that is what
+// being held means, and it is what makes the hold key's effect visible in the
+// demo rather than only in the confirm dialog.
+func (f *Fake) applyUpgrade(argv []string) string {
+	securityOnly := false
+	for _, arg := range argv {
+		if arg == dnfSecurity {
+			securityOnly = true
+		}
+	}
+	var kept []updates.Package
+	upgraded := 0
+	for _, p := range f.model.Pending {
+		if p.Held || (securityOnly && !p.Security) {
+			kept = append(kept, p)
+			continue
+		}
+		upgraded++
+	}
+	f.model.Pending = kept
+	f.model.SecurityCount = 0
+	for _, p := range kept {
+		if p.Security {
+			f.model.SecurityCount++
+		}
+	}
+	if len(kept) == 0 {
+		f.model.Restart.Services = nil
+	}
+	return fmt.Sprintf("Upgraded %d packages. Complete!", upgraded)
+}
+
+// applyVersionlock places or lifts a lock on the sample machine, refusing the
+// whole subcommand the way a dnf without the plugin would.
+func (f *Fake) applyVersionlock(argv []string) (string, error) {
+	if !f.versionlock {
+		//nolint:staticcheck // ST1005: this is dnf's own message, quoted
+		return "", fmt.Errorf("No such command: versionlock. " +
+			"Please use /usr/bin/dnf --help")
+	}
+	if len(argv) < 4 {
+		return "ok", nil
+	}
+	action, name := argv[2], argv[3]
+	for i := range f.model.Pending {
+		if f.model.Pending[i].Name != name {
+			continue
+		}
+		f.model.Pending[i].Held = action == "add"
+		return "", nil
+	}
+	return "", fmt.Errorf("pkgmgr: %s is not in the pending list", name)
 }
 
 // applyTimer moves a timer to a new state, refusing a unit the sample machine
@@ -277,6 +369,15 @@ func (f *Fake) applyTimer(argv []string) (string, error) {
 // BuildTimerAction enables or disables an unattended-update unit.
 func (f *Fake) BuildTimerAction(action, unit string) (updates.Command, error) {
 	return BuildTimerAction(action, unit)
+}
+
+// BuildHold pins a package at its installed version on the sample machine, or
+// refuses exactly as the real backend would when the plugin is missing.
+func (f *Fake) BuildHold(action, name string) (updates.Command, error) {
+	if err := holdRefusal(f.model.Hold); err != nil {
+		return updates.Command{}, err
+	}
+	return BuildHold(demoManager, action, name)
 }
 
 // BuildReboot is the reboot the tool offers and never takes by itself.

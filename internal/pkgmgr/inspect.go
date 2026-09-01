@@ -42,7 +42,8 @@ func Inspect(manager string) []State {
 		bins = []string{"pacman", "checkupdates", "fakeroot", OmarchyUpdate,
 			OmarchyRestart, "snapper", "systemctl"}
 	case updates.ManagerAPT:
-		bins = []string{"apt", "apt-get", "needrestart", "snapper", "systemctl"}
+		bins = []string{"apt", "apt-get", "apt-mark", "needrestart", "snapper",
+			"systemctl"}
 	case updates.ManagerDNF:
 		bins = []string{"dnf", "rpm", "needs-restarting", "snapper", "systemctl"}
 	default:

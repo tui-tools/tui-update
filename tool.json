@@ -3,7 +3,7 @@
   "name": "tui-update",
   "binary": "tui-update",
   "tagline": "Pending package updates, what they restart, and a snapshot first",
-  "description": "A terminal UI for the updates waiting on your machine. It reads them from whichever package manager the machine actually runs — `pacman`, `apt` or `dnf` — and shows what a list of versions never tells you: what applying them will cost.\n\nEvery pending update is on one screen, with its current and new version, its repository, its size and its security flag where the manager publishes one, and the kernel and firmware sorted to the top because they are what turns an upgrade into a reboot.\n\n`enter` gives you the plan: the manager's own dry run, the restart classification — nothing, the services still holding replaced code open, or a reboot with the reason — whether a `snapper` snapshot can be taken first and the exact command that would take it, and the whole sequence, in order, before anything runs.\n\n`U` applies it behind a confirm dialog carrying that sequence, streaming the output as it goes. It never reboots by itself: when the upgrade needs one it offers `R`, with its own confirmation.\n\nRun `tui-update --demo` to drive a sample machine: every key works, every command is built and previewed for real, and nothing touches your system.",
+  "description": "A terminal UI for the updates waiting on your machine. It reads them from whichever package manager the machine runs — `pacman`, `apt` or `dnf` — and shows what a list of versions never tells you: what applying them will cost.\n\nEvery pending update is on one screen, with its current and new version, its repository, its size and its security flag where the manager publishes one, and the kernel and firmware sorted to the top.\n\n`enter` gives you the plan: the manager's own dry run, the restart classification — nothing, the services holding replaced code open, or a reboot with the reason — whether a `snapper` snapshot can be taken first, and the whole sequence in order.\n\n`U` applies it behind a confirm dialog carrying that sequence, streaming the output as it goes. It never reboots by itself: when the upgrade needs one it offers `R`, confirmed too.\n\nOn the plan, `m` cycles the upgrades the manager really has, security-only on dnf included, and `s` turns the snapshot pair off and on. On the list, `h` holds a package at its version, or lifts the hold.\n\nRun `tui-update --demo` to drive a sample machine: every key works, every command is previewed for real, and nothing touches your system.",
   "category": "packages",
   "homepage": "https://github.com/tui-tools/tui-update",
   "repo": "https://github.com/tui-tools/tui-update",
@@ -51,10 +51,18 @@
     },
     {
       "key": "m",
-      "action": "On apt, switch between upgrade and dist-upgrade"
+      "action": "On the plan: cycle upgrade, dist-upgrade (apt) and security-only (dnf)"
+    },
+    {
+      "key": "s",
+      "action": "On the plan: take the pre/post snapper snapshot, or do not"
     },
     {
       "key": "h",
+      "action": "Hold the selected package at its version, or lift the hold"
+    },
+    {
+      "key": "H",
       "action": "The package manager's own transaction history"
     },
     {
@@ -149,6 +157,14 @@
         {
           "range": ">=2.0",
           "impact": "the services to restart come from `needrestart -b`, which reads other processes' memory maps and therefore needs root; without it the package names decide"
+        },
+        {
+          "range": ">=2.0",
+          "impact": "there is no upgrade that applies only the security updates; `unattended-upgrade` honours Unattended-Upgrade::Allowed-Origins, which on Debian includes the plain archive too and can reboot on its own, so the security-only mode is not offered here"
+        },
+        {
+          "range": ">=2.0",
+          "impact": "a package is held with `apt-mark hold`, the dpkg selection every apt front end honours; `apt-mark showhold` is the unprivileged read the pending list marks its rows from"
         }
       ],
       "tested": [
@@ -186,6 +202,14 @@
         {
           "range": ">=4.0",
           "impact": "`dnf check-update` exits 100 when there are updates, so its exit code is interpreted rather than treated as a failure; it also prints only the new version, and the installed one is read from rpm"
+        },
+        {
+          "range": ">=4.0",
+          "impact": "`dnf upgrade --security` narrows the same transaction to the advisories, so the security-only mode is the plain upgrade with one flag rather than a second code path; dependencies with no advisory of their own still come along"
+        },
+        {
+          "range": ">=4.0",
+          "impact": "holding a package needs the versionlock plugin, which a minimal install does not carry; it is detected before the key is offered, and the refusal names python3-dnf-plugin-versionlock, or dnf-plugins-extras-versionlock on RHEL and its rebuilds"
         }
       ],
       "tested": [
