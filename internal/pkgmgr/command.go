@@ -66,6 +66,7 @@ var searchPaths = map[string][]string{
 	"fakeroot":         {"/usr/bin/fakeroot", "/bin/fakeroot"},
 	"apt":              {"/usr/bin/apt", "/bin/apt"},
 	"apt-get":          {"/usr/bin/apt-get", "/bin/apt-get"},
+	"apt-mark":         {"/usr/bin/apt-mark", "/bin/apt-mark"},
 	"dnf":              {"/usr/bin/dnf", "/bin/dnf"},
 	"rpm":              {"/usr/bin/rpm", "/bin/rpm"},
 	"needrestart":      {"/usr/sbin/needrestart", "/sbin/needrestart", "/usr/bin/needrestart"},
@@ -172,10 +173,17 @@ func BuildSizesDNF() updates.Command {
 	}
 }
 
+// dnfSecurity is the flag that narrows a dnf operation to the advisories the
+// distribution marked as security fixes. The same word selects the advisories
+// to list and the transaction to apply, so it is written once: the security
+// column and the security-only upgrade are then the same claim by
+// construction, not two spellings that could drift apart.
+const dnfSecurity = "--security"
+
 // BuildSecurityDNF lists the advisories that are security fixes.
 func BuildSecurityDNF() updates.Command {
 	return updates.Command{
-		Argv:        []string{"dnf", "updateinfo", "list", "--security", "-q", "--cacheonly"},
+		Argv:        []string{"dnf", "updateinfo", "list", dnfSecurity, "-q", "--cacheonly"},
 		Description: "List the pending security advisories",
 	}
 }
@@ -235,10 +243,13 @@ func BuildSimulate(manager, mode string) (updates.Command, bool) {
 			Description: "Simulate the upgrade without changing anything",
 		}, true
 	case updates.ManagerDNF:
-		return updates.Command{
-			Argv:        []string{"dnf", "upgrade", "--assumeno", "--cacheonly"},
-			Description: "Resolve the upgrade transaction without applying it",
-		}, true
+		argv := []string{"dnf", "upgrade", "--assumeno", "--cacheonly"}
+		description := "Resolve the upgrade transaction without applying it"
+		if mode == updates.UpgradeSecurity {
+			argv = []string{"dnf", "upgrade", dnfSecurity, "--assumeno", "--cacheonly"}
+			description = "Resolve the security-only transaction without applying it"
+		}
+		return updates.Command{Argv: argv, Description: description}, true
 	default:
 		return updates.Command{}, false
 	}
@@ -252,7 +263,17 @@ func BuildSimulate(manager, mode string) (updates.Command, bool) {
 // would skip the half of the job the machine was set up to do. `--no-reboot`
 // is passed because tui-update never reboots by itself; the reboot is offered
 // as its own confirmed action.
+// On dnf a third mode exists: `--security` narrows the very same transaction
+// to the advisories the distribution marked as security fixes, so the
+// security-only upgrade is the plain one with one flag rather than a second
+// code path. apt has no equivalent that is both exact and honest, and pacman
+// publishes no security metadata at all, so on both of them the security mode
+// is refused here as well as hidden in the UI — see errNoSecurityUpgrade.
 func BuildUpgrade(manager, mode string, omarchy bool) (updates.Command, error) {
+	if mode == updates.UpgradeSecurity &&
+		!CapabilitiesFor(manager).SecurityUpgrade {
+		return updates.Command{}, fmt.Errorf("%w: %s", errNoSecurityUpgrade, manager)
+	}
 	switch manager {
 	case updates.ManagerPacman:
 		if omarchy {
@@ -282,6 +303,14 @@ func BuildUpgrade(manager, mode string, omarchy bool) (updates.Command, error) {
 			Destructive: true,
 		}, nil
 	case updates.ManagerDNF:
+		if mode == updates.UpgradeSecurity {
+			return updates.Command{
+				Argv: []string{"dnf", "-y", "upgrade", dnfSecurity},
+				Description: "Upgrade only the packages carrying a security " +
+					"advisory, and whatever they depend on",
+				Destructive: true,
+			}, nil
+		}
 		return updates.Command{
 			Argv:        []string{"dnf", "-y", "upgrade"},
 			Description: "Upgrade every package",
@@ -289,6 +318,115 @@ func BuildUpgrade(manager, mode string, omarchy bool) (updates.Command, error) {
 		}, nil
 	default:
 		return updates.Command{}, fmt.Errorf("pkgmgr: unknown package manager %q", manager)
+	}
+}
+
+// errNoSecurityUpgrade is the refusal a manager gets when it is asked for an
+// upgrade of only the security fixes and has no command that does exactly
+// that. It is a sentinel so the plan screen can tell it apart from a manager
+// nobody implemented.
+var errNoSecurityUpgrade = fmt.Errorf(
+	"pkgmgr: this manager has no upgrade that applies only the security fixes")
+
+// The dnf plugin that pins a package at a version. It is a plugin rather than
+// a built-in, and a minimal install does not carry it: without it every
+// `dnf versionlock` call fails complaining about an unknown command, which
+// says nothing about what to install.
+const (
+	// VersionlockFedora is the package on Fedora and on anything that follows
+	// it.
+	VersionlockFedora = "python3-dnf-plugin-versionlock"
+	// VersionlockEL is the package on RHEL and its rebuilds, where the
+	// versionlock plugin ships from the extras set.
+	VersionlockEL = "dnf-plugins-extras-versionlock"
+)
+
+// enterpriseDistros are the /etc/os-release IDs that take VersionlockEL.
+var enterpriseDistros = map[string]bool{
+	"rhel": true, "centos": true, "almalinux": true, "rocky": true,
+	"ol": true, "amzn": true,
+}
+
+// VersionlockPackage names the package that would make `dnf versionlock`
+// work, for the distribution this machine says it is. An unknown distribution
+// gets the Fedora name, which is the one every dnf machine outside the
+// enterprise rebuilds uses.
+func VersionlockPackage(distro string) string {
+	if enterpriseDistros[strings.ToLower(distro)] {
+		return VersionlockEL
+	}
+	return VersionlockFedora
+}
+
+// BuildHoldsRead lists the packages this machine has pinned. Both are
+// unprivileged reads against local state: apt-mark reads the dpkg selections,
+// and versionlock reads its own configuration file.
+func BuildHoldsRead(manager string) (updates.Command, bool) {
+	switch manager {
+	case updates.ManagerAPT:
+		return updates.Command{
+			Argv:        []string{"apt-mark", "showhold"},
+			Description: "List the packages held at their installed version",
+		}, true
+	case updates.ManagerDNF:
+		return updates.Command{
+			// --cacheonly for the same reason every other read carries it: a
+			// dnf subcommand that decides to refresh the metadata first would
+			// turn this read into a privileged write.
+			Argv:        []string{"dnf", "versionlock", "list", "-q", "--cacheonly"},
+			Description: "List the version locks on this machine",
+		}, true
+	default:
+		return updates.Command{}, false
+	}
+}
+
+// BuildHold pins one package at its installed version, or lifts that pin.
+//
+// The package name comes from the manager's own output and ends up in an
+// argv, so it is validated before a command exists — the same rule the rpm
+// query follows.
+//
+// Holding is marked destructive and lifting is not, which is the right way
+// round: a held package stops receiving updates, security fixes included, and
+// that is the change worth painting in the danger colour.
+func BuildHold(manager, action, name string) (updates.Command, error) {
+	if err := checkPackageName(name); err != nil {
+		return updates.Command{}, err
+	}
+	if action != updates.HoldAdd && action != updates.HoldRemove {
+		return updates.Command{}, fmt.Errorf("pkgmgr: unknown hold action %q", action)
+	}
+	switch manager {
+	case updates.ManagerAPT:
+		if action == updates.HoldAdd {
+			return updates.Command{
+				Argv: []string{"apt-mark", "hold", name},
+				Description: "Hold " + name + " at its installed version, so no " +
+					"upgrade touches it until the hold is lifted",
+				Destructive: true,
+			}, nil
+		}
+		return updates.Command{
+			Argv:        []string{"apt-mark", "unhold", name},
+			Description: "Let " + name + " be upgraded again",
+		}, nil
+	case updates.ManagerDNF:
+		if action == updates.HoldAdd {
+			return updates.Command{
+				Argv: []string{"dnf", "versionlock", "add", name},
+				Description: "Lock " + name + " at its installed version, so no " +
+					"upgrade touches it until the lock is deleted",
+				Destructive: true,
+			}, nil
+		}
+		return updates.Command{
+			Argv:        []string{"dnf", "versionlock", "delete", name},
+			Description: "Let " + name + " be upgraded again",
+		}, nil
+	default:
+		return updates.Command{}, fmt.Errorf(
+			"pkgmgr: %s has no command that holds a package at a version", manager)
 	}
 }
 

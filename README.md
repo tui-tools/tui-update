@@ -189,9 +189,14 @@ tui-update --demo
 
 `--demo` runs against a sample machine: fourteen pending updates including a
 kernel and two `openssl` security fixes, a reboot already required, `sshd` and
-`nginx` holding old code open, and a `snapper` root configuration to snapshot
-into. Every key works, every command is built and previewed for real, and
-nothing touches your system.
+`nginx` holding old code open, a `snapper` root configuration to snapshot into,
+and `nginx` already held so both halves of the hold key have something to do.
+Every key works, every command is built and previewed for real, and nothing
+touches your system.
+
+`--demo-no-versionlock` is the same machine with dnf's versionlock plugin
+missing, which is how the hold key's refusal — and the package name it hands
+you — can be seen without uninstalling a plugin on a real host.
 
 ## The plan is the point
 
@@ -214,6 +219,103 @@ nothing touches your system.
   synchronise the databases, which needs root, so the pending list stands in
   and the screen says so.
 - **The whole command sequence**, in order, each line with what it does.
+
+Two keys change the plan, and both re-render it before anything is confirmed:
+
+- `m` cycles the upgrades the manager *really* has: `upgrade`, apt's
+  `dist-upgrade`, and on dnf a **security-only** one. The cycle is built from
+  the backend's capabilities, so a manager that cannot narrow an upgrade to the
+  advisories never lands on a mode it would have to fake — see
+  [Security-only upgrades](#security-only-upgrades).
+- `s` turns the **snapshot pair** off and on. The snapper `pre` and `post`
+  commands appear and disappear on the plan you are reading, so what the
+  confirm dialog carries is what you last looked at. A machine with no snapper
+  root configuration says so instead of moving a toggle that means nothing.
+
+## Security-only upgrades
+
+`m` reaches a `security` mode **on dnf only**, and that is a deliberate,
+uncomfortable asymmetry rather than an omission.
+
+**dnf can.** `dnf upgrade --security` narrows the very same transaction to the
+advisories the distribution published. It is the same `--security` word the
+tool already uses to fill the `SEC` column, written once in the code, so the
+column and the mode cannot come to mean different things. Packages carrying no
+advisory of their own can still be pulled in as dependencies — the plan says so
+in its notes, because that is dnf resolving a transaction, not the tool
+widening one.
+
+**apt cannot, and nothing here pretends otherwise.** There is no
+`apt-get upgrade --security`. The two things people reach for instead are both
+rejected here:
+
+- `apt-get -o Dir::Etc::SourceList=/dev/null upgrade` with only the security
+  list. It works by lying to apt about which sources exist, which changes how
+  the solver sees the world; the resulting transaction is not the one apt would
+  compute on the real machine. **It is not shipped.**
+- `unattended-upgrade --dry-run`, then `unattended-upgrade`. This is the honest
+  apt mechanism and it was evaluated seriously — it applies the distribution's
+  own `Unattended-Upgrade::Allowed-Origins` policy, and its dry run really does
+  print what it would do. It is still not what a key called "security-only" may
+  run, for three reasons:
+  1. **It is not security-only.** `Allowed-Origins` is whatever the admin
+     configured, and Debian's shipped default includes the plain stable archive
+     alongside the security one. Labelling that "security-only" would be false
+     on a default Debian.
+  2. **It can reboot the machine.** With `Automatic-Reboot "true"` set, a
+     command confirmed as an upgrade reboots the host. `tui-update` never
+     reboots by itself, and it will not hand that decision to a config file it
+     did not write.
+  3. **It is a separate package** (`unattended-upgrades`) that a minimal Debian
+     does not carry, and it applies its own blacklist and its own logging — so
+     the previewed sequence would stop being the sequence that ran.
+
+So on apt the mode is **gated off**: `m` cycles `upgrade` and `dist-upgrade`
+and stops there. apt still shows the security column — a package's pocket says
+whether it is a security update, and that claim is true — which is why the
+capability is split in two in the code: `SecurityMetadata` (apt: yes) and
+`SecurityUpgrade` (apt: no). On pacman there is neither.
+
+The honest workaround on apt is the manager's own: hold the packages you do not
+want moved, with `H`, and run the plain upgrade.
+
+## Holding a package back
+
+![The pending list](docs/screenshots/tui-update-main.png)
+
+`H` on a package row holds it at its installed version, or lifts a hold it
+already carries. Held rows are marked `·held` and greyed out, because a package
+nothing is going to upgrade should not look like one that is.
+
+| Manager | Hold | Lift | Read from |
+| --- | --- | --- | --- |
+| apt | `apt-mark hold <pkg>` | `apt-mark unhold <pkg>` | `apt-mark showhold` |
+| dnf | `dnf versionlock add <pkg>` | `dnf versionlock delete <pkg>` | `dnf versionlock list` |
+| pacman | — | — | — |
+
+Both are previewed and confirmed like every other change. Placing a hold is
+marked destructive and lifting one is not, which is the right way round: a held
+package stops receiving updates, **security fixes included**, until somebody
+lifts it.
+
+Two honest caveats:
+
+- **dnf's versionlock is a plugin**, and a minimal install does not carry it.
+  Without it, `dnf versionlock add` fails with `No such command: versionlock`,
+  which tells a reader nothing. So the plugin is detected when the pending list
+  is read, and `H` refuses up front, naming the package to install —
+  `python3-dnf-plugin-versionlock`, or `dnf-plugins-extras-versionlock` on RHEL
+  and its rebuilds. `tui-update --demo --demo-no-versionlock` drives that exact
+  machine, so the refusal can be seen without breaking a real one.
+- **A versionlocked package disappears from `dnf check-update`**, because the
+  lock excludes it from the available set. So on dnf a lock you placed will
+  usually not be on the list any more — which is `dnf versionlock list`'s job to
+  answer, and lifting it is a `dnf versionlock delete` on the command line. On
+  apt a held package stays on the upgradable list, so `H` toggles it both ways
+  from the screen.
+- **pacman holds packages in `/etc/pacman.conf`** (`IgnorePkg`), which is a file
+  to edit rather than a command to run. This tool does not edit configuration
+  files, so `H` says so there rather than inventing a command.
 
 ## Every change is previewed
 
@@ -250,6 +352,8 @@ legible.
 ```sh
 tui-update                        # drive the real package manager
 tui-update --demo                 # sample machine, no privileges needed
+tui-update --demo --demo-no-versionlock   # the same machine without dnf's
+                                          # versionlock plugin, so h refuses
 tui-update --check                # read the updates, print JSON, exit
 tui-update --report               # print what a bug report needs, exit
 tui-update --theme ~/mytheme/colors.toml
@@ -265,7 +369,7 @@ reason if the manager cannot be read. No UI, and it never builds or runs a
 mutation.
 
 ```console
-$ tui-update --check | head -14
+$ tui-update --check | head -16
 {
   "tool": "tui-update",
   "version": "0.1.0",
@@ -278,6 +382,8 @@ $ tui-update --check | head -14
   "restart": "none",
   "services": [],
   "snapshot": false,
+  "canHold": true,
+  "holds": 0,
   "timers": [
 ```
 
@@ -349,13 +455,17 @@ Every one of these is previewed and confirmed first.
 | upgrade (pacman) | `pacman -Syu --noconfirm` |
 | upgrade (Omarchy Server) | `omarchy-server-update run --no-reboot` |
 | upgrade (apt) | `apt-get -y upgrade`, or `apt-get -y dist-upgrade` |
-| upgrade (dnf) | `dnf -y upgrade` |
+| upgrade (dnf) | `dnf -y upgrade`, or `dnf -y upgrade --security` |
 | snapshot after | `snapper create -c root -t post -d "…" --print-number` |
+| hold (apt) | `apt-mark hold <pkg>` / `apt-mark unhold <pkg>` |
+| hold (dnf) | `dnf versionlock add <pkg>` / `dnf versionlock delete <pkg>` |
 | timers | `systemctl enable --now <unit>` / `systemctl disable --now <unit>` |
 | reboot | `systemctl reboot` |
 
-Nothing else. No package is ever installed, removed or held by this tool: it
-applies the upgrade the manager itself would apply, whole.
+Nothing else. No package is ever installed or removed by this tool: it applies
+the upgrade the manager itself would apply, whole — or, on dnf, the security
+half of it, which is the manager's own subset and not one this tool computes.
+The only per-package change it can make is a hold, and a hold installs nothing.
 
 On Omarchy Server the upgrade goes through the machine's own wrapper rather than
 straight to pacman, because that wrapper runs the same `pacman -Syu` and then
@@ -372,8 +482,10 @@ the reboot is this tool's user's decision.
 | `pgup` / `pgdn` | Scroll a page |
 | `enter` / `p` | The plan: what applying the updates would do |
 | `U` | Apply it, after confirming the whole sequence |
-| `m` | On apt, switch between `upgrade` and `dist-upgrade` |
+| `m` | On the plan: cycle `upgrade`, `dist-upgrade` (apt) and `security` (dnf) |
+| `s` | On the plan: take the pre/post snapshot, or do not |
 | `h` | The package manager's own transaction history |
+| `H` | Hold the selected package at its version, or lift the hold |
 | `t` | The unattended-update timers |
 | `e` / `d` | On the timers screen: enable / disable the unit |
 | `R` | Re-read; on a finished upgrade, offer the reboot |
@@ -400,6 +512,11 @@ the reboot is this tool's user's decision.
   pre/post pair that makes `snapper status <pre>..<post>` list what changed.
 - Preview and run the whole sequence — snapshot, refresh, upgrade, snapshot —
   one command at a time, with the output streaming into a pane.
+- Cycle the upgrade modes the manager really has, including a security-only one
+  on dnf, and turn the snapshot pair off and on, both re-rendering the plan
+  before the confirm dialog.
+- Hold a package at its installed version and lift the hold, on apt and on dnf,
+  refusing up front where the machine has no way to do it.
 - Offer the reboot afterwards, behind its own confirm dialog. Never take one.
 - Show the manager's last 20 transactions from `/var/log/pacman.log`,
   `/var/log/apt/history.log` or `dnf history list`, read-only.
@@ -409,9 +526,15 @@ the reboot is this tool's user's decision.
 ## What v0.1 cannot do
 
 - **No per-package upgrade.** The list is not a selection: it is what the
-  manager would do, and the tool applies that whole or not at all. Holding a
-  package back is the manager's own job (`IgnorePkg`, `apt-mark hold`,
-  `excludepkgs`) and this tool shows the result rather than changing it.
+  manager would do, and the tool applies that whole or not at all. The way to
+  leave a package behind is to hold it, with `H`, and then upgrade.
+- **No security-only upgrade on apt or pacman.** apt has no command that
+  applies only the security updates, and the approximations are either
+  dishonest or capable of rebooting the machine —
+  [the reasoning is above](#security-only-upgrades). pacman publishes no
+  security metadata at all.
+- **No hold on pacman.** `IgnorePkg` lives in `/etc/pacman.conf`, and this tool
+  does not edit configuration files.
 - **No rollback.** The snapshot is taken so that `snapper undochange` or a boot
   into the pre snapshot is *possible*; performing it is not a key here.
 - **No per-package size on pacman or apt.** Neither `apt list --upgradable` nor
@@ -465,6 +588,8 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | `>=2.0` | a security update is one whose pocket ends in `-security`; apt publishes no advisory id, so that pocket name is the whole reference |
 | `>=2.0` | neither `apt list --upgradable` nor `apt-get -s upgrade` reports a per-package size, so the size column is not shown; the plan carries apt's own download and disk totals instead |
 | `>=2.0` | the services to restart come from `needrestart -b`, which reads other processes' memory maps and therefore needs root; without it the package names decide |
+| `>=2.0` | there is no upgrade that applies only the security updates; `unattended-upgrade` honours Unattended-Upgrade::Allowed-Origins, which on Debian includes the plain archive too and can reboot on its own, so the security-only mode is not offered here |
+| `>=2.0` | a package is held with `apt-mark hold`, the dpkg selection every apt front end honours; `apt-mark showhold` is the unprivileged read the pending list marks its rows from |
 
 ### dnf
 
@@ -481,6 +606,8 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | `>=5.0` | `dnf --version` prints `dnf5 version 5.2.18.0`, where dnf4 prints a bare `4.24.0` on its first line; both are read by the same pattern, which keeps three components because a four-part version is not one the family schema records |
 | `>=5.0` | `dnf needs-restarting` refreshes the repository metadata before answering, which a read path must not do, so the standalone `needs-restarting` binary from dnf-plugins-core is used instead and its absence falls back to the package names |
 | `>=4.0` | `dnf check-update` exits 100 when there are updates, so its exit code is interpreted rather than treated as a failure; it also prints only the new version, and the installed one is read from rpm |
+| `>=4.0` | `dnf upgrade --security` narrows the same transaction to the advisories, so the security-only mode is the plain upgrade with one flag rather than a second code path; dependencies with no advisory of their own still come along |
+| `>=4.0` | holding a package needs the versionlock plugin, which a minimal install does not carry; it is detected before the key is offered, and the refusal names python3-dnf-plugin-versionlock, or dnf-plugins-extras-versionlock on RHEL and its rebuilds |
 
 The tested versions are generated from `compat/results.jsonl`, which the tool's
 own smoke test appends to when it runs against a real machine in
@@ -514,12 +641,20 @@ The UI never builds a `pacman`, `apt` or `dnf` command line. It talks to
 `internal/updates.Backend`, which returns a manager-neutral model:
 
 ```
-Model{Manager, Distro, Pending, SecurityCount, Restart, Snapshot, Timers, Notes}
-Package{Name, Arch, Current, New, Repo, Size, Security, SecurityRef, Group}
+Model{Manager, Distro, Pending, SecurityCount, Restart, Snapshot, Timers, Hold, Notes}
+Package{Name, Arch, Current, New, Repo, Size, Security, SecurityRef, Group, Held}
 Restart{Class, Services, Reason, RebootRequired, Source, Detail}
 Snapshot{Available, Config, Reason, Pre, Post}
-Plan{Title, DryRun, Restart, Snapshot, Commands, Notes}
+HoldSupport{Available, Reason, Hint}
+PlanOptions{Mode, Snapshot}
+Plan{Title, Mode, DryRun, Restart, Snapshot, TakeSnapshot, Commands, Notes}
 ```
+
+What each manager can do is a `Capabilities` value the backend returns, and the
+UI is built from it rather than from a list of manager names: the mode cycle,
+the `SEC` column and the hold key all read the capabilities. That is why
+`SecurityMetadata` and `SecurityUpgrade` are two fields — apt answers yes to the
+first and no to the second, and one boolean could not say that.
 
 `internal/pkgmgr` is the only package that starts a process. Which manager it
 drives is decided by the binary that is installed, cross-checked against

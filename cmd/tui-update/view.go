@@ -213,8 +213,14 @@ func packageCell(p updates.Package) string {
 	case updates.GroupCore:
 		label += " ·c"
 	}
-	if p.Ignored {
+	// Two different facts, so two different marks: ·held is a decision
+	// somebody made here with `apt-mark hold` or `dnf versionlock`, and
+	// ·ignored is the manager declining to upgrade the package on its own.
+	if p.Held {
 		label += " ·held"
+	}
+	if p.Ignored {
+		label += " ·ignored"
 	}
 	return label
 }
@@ -246,7 +252,9 @@ func orDash(value string) string {
 func (a *app) packageStyle(p updates.Package) *lipgloss.Style {
 	var style lipgloss.Style
 	switch {
-	case p.Ignored:
+	case p.Ignored || p.Held:
+		// A package nothing is going to upgrade is not worth the colour of one
+		// that is, whichever of the two reasons is holding it back.
 		style = a.theme.Row.Foreground(a.theme.Muted.GetForeground())
 	case p.Security:
 		style = a.theme.Row.Foreground(a.theme.Danger.GetForeground())
@@ -306,13 +314,20 @@ func (a *app) planLines() []string {
 	}
 	lines = append(lines, "  decided by     "+orDash(plan.Restart.Source))
 
+	lines = append(lines, "", "Upgrade mode")
+	lines = append(lines, "  "+upgradeModeLine(plan.Mode, a.caps))
+
 	lines = append(lines, "", "Snapshot before")
-	if plan.Snapshot.Available {
+	switch {
+	case plan.TakeSnapshot:
 		lines = append(lines,
-			"  snapshot before: yes",
+			"  snapshot before: yes  (s turns it off)",
 			"  "+plan.Snapshot.Pre.String(),
 			"  "+plan.Snapshot.Post.String())
-	} else {
+	case plan.Snapshot.Available:
+		lines = append(lines, "  snapshot before: no  (turned off — s turns "+
+			"it back on)")
+	default:
 		lines = append(lines, "  snapshot before: no")
 	}
 	lines = append(lines, "  "+plan.Snapshot.Reason)
@@ -344,6 +359,17 @@ func (a *app) planLines() []string {
 		lines = append(lines, "  "+line)
 	}
 	return lines
+}
+
+// upgradeModeLine names the mode this plan was built for, and what else m can
+// reach on this manager.
+func upgradeModeLine(mode string, caps updates.Capabilities) string {
+	line := orDash(mode)
+	modes := updates.UpgradeModes(caps)
+	if len(modes) < 2 {
+		return line + "  (this manager has only one kind of upgrade)"
+	}
+	return line + "  (m cycles: " + strings.Join(modes, " → ") + ")"
 }
 
 // historyLines renders the manager's transaction log.
@@ -440,6 +466,7 @@ func (a *app) shortHelpKeys() []ui.KeyHint {
 		{Key: "enter", Desc: "plan"},
 		{Key: "U", Desc: "upgrade"},
 		{Key: "h", Desc: "history"},
+		{Key: "H", Desc: "hold"},
 		{Key: "t", Desc: "timers"},
 		{Key: "/", Desc: "filter"},
 		{Key: "R", Desc: "re-read"},
@@ -451,8 +478,11 @@ func (a *app) shortHelpKeys() []ui.KeyHint {
 // planHelpKeys is the hint bar of the plan screen.
 func (a *app) planHelpKeys() []ui.KeyHint {
 	hints := []ui.KeyHint{{Key: "U", Desc: "apply"}}
-	if a.caps.DistUpgrade {
-		hints = append(hints, ui.KeyHint{Key: "m", Desc: "upgrade/dist-upgrade"})
+	if len(updates.UpgradeModes(a.caps)) > 1 {
+		hints = append(hints, ui.KeyHint{Key: "m", Desc: "mode"})
+	}
+	if a.model.Snapshot.Available {
+		hints = append(hints, ui.KeyHint{Key: "s", Desc: "snapshot"})
 	}
 	return append(hints,
 		ui.KeyHint{Key: "j/k", Desc: "scroll"},
@@ -498,8 +528,12 @@ func helpKeys() []ui.KeyHint {
 		{Key: "pgup/pgdn", Desc: "scroll a page"},
 		{Key: "enter / p", Desc: "plan: what applying the updates would do"},
 		{Key: "U", Desc: "apply the plan, after confirming the whole sequence"},
-		{Key: "m", Desc: "on apt, switch between upgrade and dist-upgrade"},
+		{Key: "m", Desc: "on the plan: cycle upgrade, dist-upgrade (apt) and " +
+			"security-only (dnf)"},
+		{Key: "s", Desc: "on the plan: take the pre/post snapshot, or do not"},
 		{Key: "h", Desc: "the package manager's own transaction history"},
+		{Key: "H", Desc: "hold the selected package at its version, or lift " +
+			"the hold"},
 		{Key: "t", Desc: "the unattended-update timers, and enable/disable them"},
 		{Key: "e / d", Desc: "on the timers screen: enable / disable the unit"},
 		{Key: "R", Desc: "re-read; on a finished upgrade, offer the reboot"},

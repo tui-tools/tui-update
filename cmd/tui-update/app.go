@@ -55,9 +55,14 @@ type app struct {
 	history []updates.Transaction
 	// plan is the sequence the plan screen is showing.
 	plan updates.Plan
-	// upgradeMode is UpgradeDefault or UpgradeDist, and only apt offers the
-	// choice.
+	// upgradeMode is one of the updates.Upgrade* constants. Which of them the
+	// m key can reach is the backend's answer, not this file's.
 	upgradeMode string
+	// snapshot is whether the plan wraps the upgrade in the snapper pre/post
+	// pair. It starts on, because a snapshot that has to be asked for is one
+	// nobody takes, and s turns it off for a machine where the extra subvolume
+	// is not wanted.
+	snapshot bool
 
 	width, height int
 	cursor        int
@@ -152,6 +157,7 @@ func newApp(backend updates.Backend, th theme.Theme,
 		caps:          backend.Capabilities(),
 		backendCompat: backendCompat,
 		upgradeMode:   updates.UpgradeDefault,
+		snapshot:      true,
 		width:         80,
 		height:        24,
 		loading:       true,
@@ -189,11 +195,12 @@ func (a *app) loadHistory() tea.Cmd {
 
 // buildPlan runs the manager's dry run and assembles the sequence.
 func (a *app) buildPlan(apply bool) tea.Cmd {
-	backend, upgradeMode := a.backend, a.upgradeMode
+	backend := a.backend
+	opts := updates.PlanOptions{Mode: a.upgradeMode, Snapshot: a.snapshot}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 		defer cancel()
-		p, err := backend.Plan(ctx, upgradeMode)
+		p, err := backend.Plan(ctx, opts)
 		return plannedMsg{plan: p, err: err, apply: apply}
 	}
 }
@@ -334,11 +341,19 @@ func (a *app) handlePlanned(msg plannedMsg) (tea.Model, tea.Cmd) {
 // two things a reader has to weigh before agreeing.
 func (a *app) applyBody(p updates.Plan) string {
 	lines := []string{restartSentence(p.Restart)}
-	if p.Snapshot.Available {
+	switch {
+	case p.TakeSnapshot:
 		lines = append(lines, "A pre-upgrade snapshot is taken first, and a "+
 			"post one after; `snapper status` between them lists what changed.")
-	} else {
+	case p.Snapshot.Available:
+		lines = append(lines, "No snapshot: this machine could take one, and "+
+			"it was turned off for this plan.")
+	default:
 		lines = append(lines, "No snapshot: "+p.Snapshot.Reason+".")
+	}
+	if p.Mode == updates.UpgradeSecurity {
+		lines = append(lines, "Only the packages carrying a security advisory "+
+			"are upgraded; everything else stays where it is.")
 	}
 	lines = append(lines, "tui-update never reboots by itself.")
 	return strings.Join(lines, "\n")
@@ -501,6 +516,8 @@ func (a *app) handlePendingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "h":
 		a.mode, a.scroll, a.loading = modeHistory, 0, true
 		return a, a.loadHistory()
+	case "H":
+		return a, a.confirmHold()
 	case "t":
 		a.mode, a.timerCursor = modeTimers, 0
 	case "R", "ctrl+r":
@@ -521,6 +538,42 @@ func (a *app) openPlan(apply bool) tea.Cmd {
 	return a.buildPlan(apply)
 }
 
+// confirmHold previews holding the selected package at its installed version,
+// or lifting a hold it already carries.
+//
+// The refusal comes from the backend, which read the machine before the key
+// was pressed: on a dnf without the versionlock plugin this says what to
+// install rather than letting `dnf versionlock add` fail in front of the user
+// with a message about an unknown command.
+func (a *app) confirmHold() tea.Cmd {
+	if a.cursor < 0 || a.cursor >= len(a.visible) {
+		a.setStatus(ui.StatusWarn, "no package selected")
+		return nil
+	}
+	pkg := a.visible[a.cursor]
+	action := updates.HoldAdd
+	if pkg.Held {
+		action = updates.HoldRemove
+	}
+	cmd, err := a.backend.BuildHold(action, pkg.Name)
+	if err != nil {
+		a.setStatus(ui.StatusError, firstLine(err.Error()))
+		return nil
+	}
+
+	body := cmd.Description + "."
+	if action == updates.HoldAdd {
+		body += "\nA held package stops receiving updates, security fixes " +
+			"included, until the hold is lifted."
+	}
+	if reason := a.model.Hold.Reason; reason != "" {
+		body += "\nHow: " + reason + "."
+	}
+	a.previous = modePending
+	a.openConfirm(cmd.Description, body, cmd)
+	return nil
+}
+
 // handlePlanKey handles the plan screen.
 func (a *app) handlePlanKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -533,28 +586,50 @@ func (a *app) handlePlanKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "U", "enter":
 		return a, a.confirmPlan()
 	case "m":
-		return a, a.toggleUpgradeMode()
+		return a, a.cycleUpgradeMode()
+	case "s":
+		return a, a.toggleSnapshot()
 	case "R", "ctrl+r":
 		return a, a.openPlan(false)
 	}
 	return a.handleScrollScreen(msg, len(a.planLines()))
 }
 
-// toggleUpgradeMode switches between a plain upgrade and a dist-upgrade, on
-// the one manager that draws a distinction.
-func (a *app) toggleUpgradeMode() tea.Cmd {
-	if !a.caps.DistUpgrade {
+// cycleUpgradeMode walks the modes this backend really offers: the plain
+// upgrade, apt's dist-upgrade where it exists, and the security-only upgrade
+// where the manager can apply exactly the security fixes and nothing else.
+//
+// The cycle comes from the capabilities rather than from a list written here,
+// so a manager that cannot narrow an upgrade to the advisories never lands on
+// a mode it would have to fake.
+func (a *app) cycleUpgradeMode() tea.Cmd {
+	modes := updates.UpgradeModes(a.caps)
+	if len(modes) < 2 {
 		a.setStatusf(ui.StatusWarn,
 			"%s has one kind of upgrade, so there is nothing to switch",
 			a.model.Manager)
 		return nil
 	}
-	if a.upgradeMode == updates.UpgradeDefault {
-		a.upgradeMode = updates.UpgradeDist
-	} else {
-		a.upgradeMode = updates.UpgradeDefault
-	}
+	a.upgradeMode = updates.NextUpgradeMode(a.caps, a.upgradeMode)
 	a.setStatusf(ui.StatusInfo, "mode: %s", a.upgradeMode)
+	return a.openPlan(false)
+}
+
+// toggleSnapshot turns the pre/post snapper pair on or off and re-plans, so
+// the commands appear or disappear on the plan screen before anything is
+// confirmed. A machine with nowhere to take a snapshot says so instead.
+func (a *app) toggleSnapshot() tea.Cmd {
+	if !a.model.Snapshot.Available {
+		a.setStatusf(ui.StatusWarn, "no snapshot here: %s",
+			a.model.Snapshot.Reason)
+		return nil
+	}
+	a.snapshot = !a.snapshot
+	if a.snapshot {
+		a.setStatus(ui.StatusInfo, "snapshot: on")
+	} else {
+		a.setStatus(ui.StatusWarn, "snapshot: off")
+	}
 	return a.openPlan(false)
 }
 

@@ -1,0 +1,6 @@
+# Added lock on Mon Aug 24 06:12:03 2026
+glibc-0:2.41-4.fc42.*
+kernel-6.14.9-300.fc42.*
+kernel-core-0:6.14.9-300.fc42.*
+nginx
+python3-dnf-plugin-versionlock.noarch

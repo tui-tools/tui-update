@@ -336,3 +336,42 @@ func FuzzParseSnapperConfigs(f *testing.F) {
 		}
 	})
 }
+
+// ----------------------------------------------------------------- holds ---
+//
+// A name that comes out of these two ends up in `apt-mark hold <name>` or
+// `dnf versionlock add <name>`, so what matters is that it is a package name
+// and nothing else: no whitespace, no version tail, nothing a shell or a
+// manager would read as a second argument.
+
+func FuzzParseAPTHolds(f *testing.F) {
+	seed(f, "apt-mark-showhold.txt")
+	f.Fuzz(func(t *testing.T, out string) {
+		checkHoldNames(t, ParseAPTHolds(out))
+	})
+}
+
+func FuzzParseDNFVersionlock(f *testing.F) {
+	seed(f, "dnf-versionlock-list.txt")
+	f.Fuzz(func(t *testing.T, out string) {
+		checkHoldNames(t, ParseDNFVersionlock(out))
+	})
+}
+
+// checkHoldNames is the shared invariant of both hold readers.
+func checkHoldNames(t *testing.T, holds map[string]bool) {
+	t.Helper()
+	for name := range holds {
+		if name == "" {
+			t.Fatalf("a blank package name was read as held")
+		}
+		if name != strings.TrimSpace(name) {
+			t.Fatalf("held name is not trimmed: %q", name)
+		}
+		// The name reaches an argv, so it has to satisfy the same rule every
+		// other package name in this package does.
+		if err := checkPackageName(name); err != nil {
+			t.Fatalf("held name is not a package name: %v", err)
+		}
+	}
+}

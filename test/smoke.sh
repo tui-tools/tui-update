@@ -284,6 +284,48 @@ if [[ "$manager" == "pacman" ]]; then
     '"security": 0'
 fi
 
+# 8b. The hold answer agrees with the machine. It is a read like every other:
+#    `apt-mark showhold` and `dnf versionlock list` both answer unprivileged
+#    from local state, and a machine that cannot hold a package at all — no
+#    versionlock plugin, or pacman — must say so rather than offering a key
+#    that would fail.
+case "$manager" in
+  pacman)
+    check "pacman claims no hold it cannot place" \
+      "$bin --check" \
+      '"canHold": false'
+    ;;
+  apt)
+    check "apt reports that a package can be held" \
+      "$bin --check" \
+      '"canHold": true'
+    expected_holds=$(apt-mark showhold 2>/dev/null | grep -c . || true)
+    holds=$(json_field holds "$report")
+    # Only the held packages that are also upgradable are on the list, so the
+    # tool's count is a subset of apt-mark's rather than equal to it.
+    if [[ $holds =~ ^[0-9]+$ ]] && ((holds <= expected_holds)); then
+      printf 'PASS  holds (%s) is within `apt-mark showhold` (%s)\n' \
+        "$holds" "$expected_holds"
+      pass=$((pass + 1))
+    else
+      printf 'FAIL  holds is %s, `apt-mark showhold` lists %s\n' \
+        "${holds:-missing}" "$expected_holds"
+      fail=$((fail + 1))
+    fi
+    ;;
+  dnf)
+    # The plugin decides, and the tool must agree with whether it is there.
+    if dnf versionlock list -q --cacheonly >/dev/null 2>&1; then
+      want=true
+    else
+      want=false
+    fi
+    check "the hold answer matches whether versionlock is installed ($want)" \
+      "$bin --check" \
+      "\"canHold\": $want"
+    ;;
+esac
+
 # 9. --check must not refresh the manager's metadata. That is a privileged
 #    write to a root-owned cache, and it is the one thing that would make the
 #    read path unusable as an ordinary user.

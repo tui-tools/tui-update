@@ -86,6 +86,11 @@ type Package struct {
 	Group string
 	// Ignored reports a package the manager itself is holding back.
 	Ignored bool
+	// Held reports a package this machine has pinned on purpose:
+	// `apt-mark hold` on apt, a `dnf versionlock` entry on dnf. It is a
+	// decision somebody made, as opposed to Ignored, which is the manager
+	// declining to upgrade a package on its own.
+	Held bool
 }
 
 // Label renders the package for a one-line summary.
@@ -183,6 +188,32 @@ type Timer struct {
 	Description string
 }
 
+// HoldSupport reports whether this machine can pin a package at its installed
+// version, and says why not when it cannot.
+//
+// It is a fact about the machine rather than about the manager: apt-mark ships
+// with apt, but dnf's versionlock is a plugin that a minimal install does not
+// carry, and running `dnf versionlock` without it fails with a message about
+// an unknown command rather than about a missing package. Detecting it first
+// is what lets the refusal name the package to install.
+type HoldSupport struct {
+	// Available reports that a hold can be placed and lifted here.
+	Available bool
+	// Reason explains Available either way, in one sentence.
+	Reason string
+	// Hint is what to install to make it available, empty when nothing would
+	// help or when it already is.
+	Hint string
+}
+
+// The hold actions BuildHold accepts.
+const (
+	// HoldAdd pins a package at its installed version.
+	HoldAdd = "hold"
+	// HoldRemove lifts that pin.
+	HoldRemove = "unhold"
+)
+
 // Transaction is one entry of the manager's own history, read-only.
 type Transaction struct {
 	// ID is the manager's identifier: a dnf transaction id, or the timestamp
@@ -213,6 +244,10 @@ type Model struct {
 	Snapshot Snapshot
 	// Timers are the unattended-update mechanisms found on the machine.
 	Timers []Timer
+	// Hold reports whether a package can be pinned here, and why not when it
+	// cannot. It is read once, with the pending list, so the key that holds a
+	// package can refuse before building a command that would fail.
+	Hold HoldSupport
 	// Notes are facts about this machine worth showing once: an
 	// omarchy-server-update wrapper found, a metadata cache nobody has
 	// refreshed, a classifier that needed a privilege it did not get.
@@ -265,14 +300,36 @@ type Plan struct {
 	Title string
 	// DryRun is the manager's own simulation output, verbatim.
 	DryRun string
+	// Mode is the Upgrade* constant this plan was built for, echoed so the
+	// screen can name it without holding on to what it asked for.
+	Mode string
 	// Restart and Snapshot are the model's, re-read as part of planning.
 	Restart  Restart
 	Snapshot Snapshot
+	// TakeSnapshot reports that the snapshot pair is part of Commands. It is
+	// false either because the machine cannot take one — Snapshot.Available is
+	// false — or because the reader turned it off, and the plan screen tells
+	// those two apart.
+	TakeSnapshot bool
 	// Commands run in order, and are what the confirm dialog shows. The
 	// snapshot commands are already in it when one is taken.
 	Commands []Command
 	// Notes are the caveats that apply to this plan.
 	Notes []string
+}
+
+// PlanOptions is what the reader asked the plan to be: which kind of upgrade,
+// and whether the snapshot pair wraps it.
+//
+// It is a struct rather than two arguments because both are choices made on
+// the plan screen, and a backend that grew a third one should not change every
+// call site again.
+type PlanOptions struct {
+	// Mode is one of the Upgrade* constants.
+	Mode string
+	// Snapshot asks for the pre/post snapper pair. A machine with nowhere to
+	// take one ignores it: the plan says so rather than pretending.
+	Snapshot bool
 }
 
 // Preview renders every command of the plan, one per line, without a runner:
@@ -294,6 +351,13 @@ type Capabilities struct {
 	// SecurityMetadata reports that the manager publishes which updates are
 	// security fixes. Without it the column reads "n/a" rather than "no".
 	SecurityMetadata bool
+	// SecurityUpgrade reports that the manager can apply only those fixes, in
+	// one command, exactly. It is a stricter claim than SecurityMetadata and
+	// deliberately a separate one: apt publishes the metadata — a package's
+	// pocket says whether it is a security update — and still has no upgrade
+	// that installs only those, so a security-only mode there would be a
+	// promise the command line cannot keep. See the README.
+	SecurityUpgrade bool
 	// DistUpgrade reports that the manager separates a plain upgrade from one
 	// allowed to add and remove packages (apt's dist-upgrade).
 	DistUpgrade bool
@@ -316,7 +380,38 @@ const (
 	// UpgradeDist is apt's dist-upgrade, which may add and remove packages
 	// to satisfy a change in dependencies.
 	UpgradeDist = "dist-upgrade"
+	// UpgradeSecurity applies only the updates the manager itself marks as
+	// security fixes. It is offered only where Capabilities.SecurityUpgrade
+	// says the manager can really do that.
+	UpgradeSecurity = "security"
 )
+
+// UpgradeModes is the cycle the plan screen walks, in order, filtered by what
+// the backend supports. It lives here rather than in the UI so the order is
+// the same fact the tests and the help screen read.
+func UpgradeModes(caps Capabilities) []string {
+	modes := []string{UpgradeDefault}
+	if caps.DistUpgrade {
+		modes = append(modes, UpgradeDist)
+	}
+	if caps.SecurityUpgrade {
+		modes = append(modes, UpgradeSecurity)
+	}
+	return modes
+}
+
+// NextUpgradeMode is the mode after this one in the cycle, wrapping. A mode
+// the backend no longer supports falls back to the plain upgrade rather than
+// leaving the screen on a mode it cannot build.
+func NextUpgradeMode(caps Capabilities, current string) string {
+	modes := UpgradeModes(caps)
+	for i, mode := range modes {
+		if mode == current {
+			return modes[(i+1)%len(modes)]
+		}
+	}
+	return UpgradeDefault
+}
 
 // The timer actions BuildTimerAction accepts.
 const (
@@ -344,8 +439,8 @@ type Backend interface {
 	// `--check` into a privileged operation.
 	Load(ctx context.Context) (Model, error)
 	// Plan runs the manager's own dry run and assembles the sequence that
-	// would apply it. mode is one of the Upgrade* constants.
-	Plan(ctx context.Context, mode string) (Plan, error)
+	// would apply it, as opts asked for it.
+	Plan(ctx context.Context, opts PlanOptions) (Plan, error)
 	// History returns the manager's last transactions, newest first.
 	History(ctx context.Context) ([]Transaction, error)
 	// Run executes a previously previewed command.
@@ -353,6 +448,11 @@ type Backend interface {
 
 	// BuildTimerAction enables or disables an unattended-update unit.
 	BuildTimerAction(action, unit string) (Command, error)
+	// BuildHold pins a package at its installed version, or lifts that pin.
+	// action is HoldAdd or HoldRemove. It returns an error rather than a
+	// command on a machine that cannot hold packages, so the refusal names
+	// what is missing instead of a command failing later.
+	BuildHold(action, name string) (Command, error)
 	// BuildReboot is the reboot the tool offers but never takes by itself.
 	BuildReboot() (Command, error)
 }

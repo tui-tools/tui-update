@@ -59,6 +59,12 @@ type checkReport struct {
 	// SnapshotConfig which snapper configuration would take it.
 	Snapshot       bool   `json:"snapshot"`
 	SnapshotConfig string `json:"snapshotConfig,omitempty"`
+	// CanHold reports that a package can be pinned at its installed version
+	// here, and Holds how many of the pending ones already are. A machine
+	// without dnf's versionlock plugin answers false, which is a fact about
+	// the machine rather than a failure of the read.
+	CanHold bool `json:"canHold"`
+	Holds   int  `json:"holds"`
 	// Timers is the state of every unattended-update unit found.
 	Timers []checkTimer `json:"timers"`
 	// Compat is what the manager version probe found. It is reported rather
@@ -101,8 +107,14 @@ func runCheck(backend updates.Backend, backendCompat compat.Result,
 		Services:       model.Restart.Services,
 		Snapshot:       model.Snapshot.Available,
 		SnapshotConfig: model.Snapshot.Config,
+		CanHold:        model.Hold.Available,
 		Compat:         backendCompat,
 		Model:          model,
+	}
+	for _, p := range model.Pending {
+		if p.Held {
+			report.Holds++
+		}
 	}
 	// A nil slice marshals as null, which a shell script has to special-case.
 	if report.Services == nil {

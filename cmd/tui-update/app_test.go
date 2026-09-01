@@ -27,6 +27,12 @@ func newTestApp(t *testing.T, width, height int) (*app, *pkgmgr.Fake) {
 	return a, fake
 }
 
+// defaultPlanOptions is what the plan screen asks for when nothing has been
+// toggled: the plain upgrade, with the snapshot on.
+func defaultPlanOptions() updates.PlanOptions {
+	return updates.PlanOptions{Mode: updates.UpgradeDefault, Snapshot: true}
+}
+
 // send delivers one message and runs nothing in the background: the returned
 // command is dropped, so a test drives the model rather than the runtime.
 func send(a *app, msg tea.Msg) tea.Cmd {
@@ -107,7 +113,7 @@ func primeScreen(t *testing.T, a *app, fake *pkgmgr.Fake, name string) {
 	t.Helper()
 	switch name {
 	case "plan":
-		plan, err := fake.Plan(t.Context(), updates.UpgradeDefault)
+		plan, err := fake.Plan(t.Context(), defaultPlanOptions())
 		if err != nil {
 			t.Fatalf("Plan: %v", err)
 		}
@@ -172,7 +178,7 @@ func TestPlanShowsTheWholeSequence(t *testing.T) {
 func TestApplyConfirmsBeforeRunningAnything(t *testing.T) {
 	a, fake := newTestApp(t, 120, 40)
 	key(a, "U")
-	plan, err := fake.Plan(t.Context(), updates.UpgradeDefault)
+	plan, err := fake.Plan(t.Context(), defaultPlanOptions())
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
@@ -212,7 +218,7 @@ func TestApplyConfirmsBeforeRunningAnything(t *testing.T) {
 func TestApplyRunsTheSequenceInOrder(t *testing.T) {
 	a, fake := newTestApp(t, 120, 40)
 	key(a, "U")
-	plan, err := fake.Plan(t.Context(), updates.UpgradeDefault)
+	plan, err := fake.Plan(t.Context(), defaultPlanOptions())
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
@@ -244,10 +250,20 @@ func TestApplyRunsTheSequenceInOrder(t *testing.T) {
 				i, ran[i].String(), cmd.String())
 		}
 	}
-	// The pane carries what each command printed.
+	// The pane carries what each command printed. Thirteen of the fourteen:
+	// the sample machine holds nginx, and a held package is precisely one an
+	// upgrade does not touch.
 	log := strings.Join(a.applyLog, "\n")
-	if !strings.Contains(log, "Upgraded 14 packages") {
+	if !strings.Contains(log, "Upgraded 13 packages") {
 		t.Errorf("the apply pane does not carry the upgrade output:\n%s", log)
+	}
+	after, err := fake.Load(t.Context())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(after.Pending) != 1 || after.Pending[0].Name != "nginx" {
+		t.Errorf("after the upgrade the pending list is %v, want the held "+
+			"package alone", after.Pending)
 	}
 }
 
@@ -256,7 +272,7 @@ func TestApplyRunsTheSequenceInOrder(t *testing.T) {
 func TestRebootIsOfferedButNeverTaken(t *testing.T) {
 	a, fake := newTestApp(t, 120, 40)
 	a.mode, a.applyDone = modeApply, true
-	plan, err := fake.Plan(t.Context(), updates.UpgradeDefault)
+	plan, err := fake.Plan(t.Context(), defaultPlanOptions())
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
@@ -377,19 +393,301 @@ func TestRestartSentence(t *testing.T) {
 	}
 }
 
-// TestUpgradeModeIsRefusedWhereItDoesNotExist: dnf has one kind of upgrade,
-// so m says so rather than silently doing nothing.
-func TestUpgradeModeIsRefusedWhereItDoesNotExist(t *testing.T) {
+// TestUpgradeModeCycle walks m through every manager's real cycle.
+//
+// The point of the table is the third column: a mode is offered only where the
+// manager can really do it. apt publishes security metadata and still cannot
+// upgrade only the security fixes, so `security` never appears there, and
+// pacman — which publishes no metadata at all — has nothing to cycle.
+func TestUpgradeModeCycle(t *testing.T) {
+	tests := []struct {
+		name  string
+		caps  updates.Capabilities
+		cycle []string
+	}{
+		{
+			name:  "pacman has one kind of upgrade",
+			caps:  pkgmgr.CapabilitiesFor(updates.ManagerPacman),
+			cycle: []string{updates.UpgradeDefault},
+		},
+		{
+			name: "apt cycles the two upgrades it really has",
+			caps: pkgmgr.CapabilitiesFor(updates.ManagerAPT),
+			cycle: []string{
+				updates.UpgradeDefault, updates.UpgradeDist,
+				updates.UpgradeDefault,
+			},
+		},
+		{
+			name: "dnf cycles the plain upgrade and the security-only one",
+			caps: pkgmgr.CapabilitiesFor(updates.ManagerDNF),
+			cycle: []string{
+				updates.UpgradeDefault, updates.UpgradeSecurity,
+				updates.UpgradeDefault,
+			},
+		},
+		{
+			name: "a manager with everything walks all three",
+			caps: updates.Capabilities{
+				SecurityMetadata: true, SecurityUpgrade: true, DistUpgrade: true,
+			},
+			cycle: []string{
+				updates.UpgradeDefault, updates.UpgradeDist,
+				updates.UpgradeSecurity, updates.UpgradeDefault,
+			},
+		},
+	}
+	for _, test := range tests {
+		mode := updates.UpgradeDefault
+		for i, want := range test.cycle {
+			if i > 0 {
+				mode = updates.NextUpgradeMode(test.caps, mode)
+			}
+			if mode != want {
+				t.Errorf("%s: step %d is %q, want %q", test.name, i, mode, want)
+			}
+		}
+	}
+}
+
+// TestSecurityOnlyIsSkippedWithoutTheCapability is the same rule stated as the
+// one thing that must never happen: a reader who asked for the security fixes
+// is handed the full upgrade instead.
+func TestSecurityOnlyIsSkippedWithoutTheCapability(t *testing.T) {
+	for _, manager := range []string{
+		updates.ManagerPacman, updates.ManagerAPT,
+	} {
+		caps := pkgmgr.CapabilitiesFor(manager)
+		for _, mode := range updates.UpgradeModes(caps) {
+			if mode == updates.UpgradeSecurity {
+				t.Errorf("%s offers a security-only upgrade it cannot perform",
+					manager)
+			}
+		}
+		if _, err := pkgmgr.BuildUpgrade(manager, updates.UpgradeSecurity,
+			false); err == nil {
+			t.Errorf("%s built a security-only upgrade command", manager)
+		}
+	}
+}
+
+// TestModeKeyIsRefusedWhereThereIsNothingToCycle: a manager with one kind of
+// upgrade says so rather than silently doing nothing.
+func TestModeKeyIsRefusedWhereThereIsNothingToCycle(t *testing.T) {
 	a, _ := newTestApp(t, 120, 30)
+	a.caps = pkgmgr.CapabilitiesFor(updates.ManagerPacman)
 	a.mode = modePlan
 	key(a, "m")
 	if a.upgradeMode != updates.UpgradeDefault {
-		t.Errorf("mode changed to %q on a manager without a dist-upgrade",
+		t.Errorf("mode changed to %q on a manager with one upgrade",
 			a.upgradeMode)
 	}
 	if !strings.Contains(a.status, "one kind of upgrade") {
 		t.Errorf("status = %q", a.status)
 	}
+}
+
+// TestSecurityOnlyPlanRunsTheNarrowedTransaction: on the sample machine m
+// reaches the security mode, and the plan it builds carries `--security` on
+// the one command that changes anything.
+func TestSecurityOnlyPlanRunsTheNarrowedTransaction(t *testing.T) {
+	a, fake := newTestApp(t, 120, 40)
+	a.mode = modePlan
+	key(a, "m")
+	if a.upgradeMode != updates.UpgradeSecurity {
+		t.Fatalf("m reached %q, want the security-only mode", a.upgradeMode)
+	}
+
+	plan, err := fake.Plan(t.Context(), updates.PlanOptions{
+		Mode: updates.UpgradeSecurity, Snapshot: true,
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	send(a, plannedMsg{plan: plan})
+
+	preview := plan.Preview()
+	if !strings.Contains(preview, "dnf -y upgrade --security") {
+		t.Errorf("the security-only plan runs:\n%s", preview)
+	}
+	if !strings.Contains(plan.Title, "security fix") {
+		t.Errorf("title = %q, want it to name what is being applied", plan.Title)
+	}
+	// The dry run shows the security fixes alone, so the narrowing is visible
+	// before the confirm dialog rather than only in the argv.
+	for _, want := range []string{"openssl", "kernel"} {
+		if !strings.Contains(plan.DryRun, want) {
+			t.Errorf("the security dry run does not list %q:\n%s", want, plan.DryRun)
+		}
+	}
+	if strings.Contains(plan.DryRun, "vim-minimal") {
+		t.Errorf("the security dry run lists a package with no advisory:\n%s",
+			plan.DryRun)
+	}
+}
+
+// TestSnapshotToggleRePlansBeforeTheConfirm is the whole point of the s key:
+// the snapshot commands appear and disappear on the plan a reader is looking
+// at, not somewhere between the confirm dialog and the machine.
+func TestSnapshotToggleRePlansBeforeTheConfirm(t *testing.T) {
+	a, fake := newTestApp(t, 120, 40)
+	key(a, "p")
+	primeScreen(t, a, fake, "plan")
+
+	with := strings.Join(a.planLines(), "\n")
+	if !strings.Contains(with, "snapper create -c root -t pre") ||
+		!strings.Contains(with, "snapshot before: yes") {
+		t.Fatalf("the plan opens without the snapshot:\n%s", with)
+	}
+
+	// s turns it off and re-plans, which the test delivers itself.
+	key(a, "s")
+	if a.snapshot {
+		t.Fatalf("s did not turn the snapshot off")
+	}
+	off, err := fake.Plan(t.Context(), updates.PlanOptions{
+		Mode: updates.UpgradeDefault, Snapshot: false,
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	send(a, plannedMsg{plan: off})
+
+	without := strings.Join(a.planLines(), "\n")
+	if strings.Contains(without, "snapper create") {
+		t.Errorf("the snapshot survived being turned off:\n%s", without)
+	}
+	if !strings.Contains(without, "turned off") {
+		t.Errorf("the plan does not say the snapshot was declined:\n%s", without)
+	}
+	for _, cmd := range off.Commands {
+		if strings.HasPrefix(cmd.String(), "snapper") {
+			t.Errorf("the sequence still takes a snapshot: %v", off.Preview())
+		}
+	}
+	// And the machine's own answer is untouched: it can still take one.
+	if !off.Snapshot.Available {
+		t.Errorf("turning the snapshot off changed what the machine can do")
+	}
+
+	// s again puts it back, and the confirm dialog carries the pair.
+	key(a, "s")
+	if !a.snapshot {
+		t.Fatalf("s did not turn the snapshot back on")
+	}
+	send(a, plannedMsg{plan: mustPlan(t, fake, defaultPlanOptions())})
+	key(a, "U")
+	if a.mode != modeConfirm {
+		t.Fatalf("U did not open the confirm dialog (mode %v)", a.mode)
+	}
+	if !strings.Contains(a.confirm.Command, "snapper create -c root -t pre") {
+		t.Errorf("the dialog lost the snapshot:\n%s", a.confirm.Command)
+	}
+}
+
+// TestSnapshotToggleIsRefusedWithNowhereToSnapshot.
+func TestSnapshotToggleIsRefusedWithNowhereToSnapshot(t *testing.T) {
+	a, _ := newTestApp(t, 120, 30)
+	a.model.Snapshot = updates.Snapshot{Reason: "snapper is not installed"}
+	a.mode = modePlan
+	key(a, "s")
+	if !a.snapshot {
+		t.Errorf("the toggle moved on a machine with nowhere to snapshot")
+	}
+	if !strings.Contains(a.status, "snapper is not installed") {
+		t.Errorf("status = %q, want the machine's own reason", a.status)
+	}
+}
+
+// TestHoldIsPreviewedAndToggles: H holds the selected package and lifts a hold
+// it already carries, both behind the same confirm dialog as everything else.
+func TestHoldIsPreviewedAndToggles(t *testing.T) {
+	a, fake := newTestApp(t, 120, 30)
+
+	// The sample machine holds nginx, so the key on that row lifts it.
+	a.cursor = indexOf(t, a, "nginx")
+	key(a, "H")
+	if a.mode != modeConfirm {
+		t.Fatalf("H did not open a confirm dialog (mode %v)", a.mode)
+	}
+	if a.confirm.Command != "sudo -n dnf versionlock delete nginx" {
+		t.Errorf("the dialog previews %q", a.confirm.Command)
+	}
+	if len(fake.Ran()) != 0 {
+		t.Errorf("the hold changed before being confirmed: %v", fake.Ran())
+	}
+	if cmd := key(a, "y"); cmd != nil {
+		send(a, cmd())
+	}
+	if got := fake.Ran()[0].String(); got != "dnf versionlock delete nginx" {
+		t.Errorf("ran %q, which is not what was previewed", got)
+	}
+
+	// And on a package that is not held, it places one.
+	model, err := fake.Load(t.Context())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	send(a, loadedMsg{model: model})
+	a.cursor = indexOf(t, a, "vim-minimal")
+	key(a, "H")
+	if a.confirm.Command != "sudo -n dnf versionlock add vim-minimal" {
+		t.Errorf("the dialog previews %q", a.confirm.Command)
+	}
+	if !a.confirm.Danger {
+		t.Errorf("holding a package stops its security fixes and must be " +
+			"painted as the change it is")
+	}
+}
+
+// TestHoldIsRefusedWithoutTheVersionlockPlugin: the refusal names the package
+// to install, rather than letting dnf fail about an unknown command.
+func TestHoldIsRefusedWithoutTheVersionlockPlugin(t *testing.T) {
+	fake := pkgmgr.NewFakeWithoutVersionlock()
+	a := newApp(fake, theme.FromPalette(theme.TokyoNight()), compat.Result{})
+	send(a, tea.WindowSizeMsg{Width: 120, Height: 30})
+	model, err := fake.Load(t.Context())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	send(a, loadedMsg{model: model})
+
+	key(a, "H")
+	if a.mode == modeConfirm {
+		t.Fatalf("a hold was previewed on a machine that cannot hold anything")
+	}
+	if len(fake.Ran()) != 0 {
+		t.Errorf("something ran anyway: %v", fake.Ran())
+	}
+	for _, want := range []string{"versionlock", pkgmgr.VersionlockFedora} {
+		if !strings.Contains(a.status, want) {
+			t.Errorf("the refusal does not mention %q: %q", want, a.status)
+		}
+	}
+}
+
+// indexOf finds a package on the visible list, so a test can put the cursor
+// on it by name rather than by a position the sort could move.
+func indexOf(t *testing.T, a *app, name string) int {
+	t.Helper()
+	for i, p := range a.visible {
+		if p.Name == name {
+			return i
+		}
+	}
+	t.Fatalf("%q is not on the pending list", name)
+	return 0
+}
+
+// mustPlan builds a plan or fails the test.
+func mustPlan(t *testing.T, fake *pkgmgr.Fake,
+	opts updates.PlanOptions) updates.Plan {
+	t.Helper()
+	plan, err := fake.Plan(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	return plan
 }
 
 // TestEmptyMachineSaysSo.
@@ -438,7 +736,9 @@ func TestPendingFailureIsNotAnUpToDateMachine(t *testing.T) {
 // screen does not name is a key nobody will find.
 func TestHelpScreenCoversEveryActionKey(t *testing.T) {
 	help := helpKeys()
-	for _, want := range []string{"U", "h", "t", "e / d", "R", "/", "q"} {
+	for _, want := range []string{
+		"U", "m", "s", "h", "H", "t", "e / d", "R", "/", "q",
+	} {
 		found := false
 		for _, hint := range help {
 			if hint.Key == want {
