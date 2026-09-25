@@ -3,9 +3,11 @@
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/tui-tools/tui-update/badge)](https://scorecard.dev/viewer/?uri=github.com/tui-tools/tui-update)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14368/badge)](https://www.bestpractices.dev/projects/14368)
 
-> **Beta.** The family is days old and still changing. Package names,
-> flags and keys may move without notice until 1.0. Pin versions, and report
-> what breaks.
+<!-- stability:start -->
+> **Beta.** The family is days old and still changing. Package names, flags
+> and keys may move without notice until 1.0. Pin versions, and report what
+> breaks.
+<!-- stability:end -->
 
 A terminal UI for the updates waiting on your machine. It reads them from
 whichever package manager the machine actually runs — `pacman`, `apt` or `dnf` —
@@ -131,7 +133,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.2.1/tui-update_0.2.1_linux_amd64.tar.gz | tar -xz tui-update
+curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.2.2/tui-update_0.2.2_linux_amd64.tar.gz | tar -xz tui-update
 sudo install -m0755 tui-update /usr/local/bin/tui-update
 ```
 
