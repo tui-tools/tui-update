@@ -120,6 +120,15 @@ func runCheck(backend updates.Backend, backendCompat compat.Result,
 	if report.Services == nil {
 		report.Services = []string{}
 	}
+	// The same goes for the variables of the snapshot commands: the kit's
+	// runner.Command carries Env since v0.4.2, nil when a command sets none.
+	for _, cmd := range []*updates.Command{
+		&report.Model.Snapshot.Pre, &report.Model.Snapshot.Post,
+	} {
+		if cmd.Env == nil {
+			cmd.Env = []string{}
+		}
+	}
 	report.Timers = []checkTimer{}
 	for _, timer := range model.Timers {
 		report.Timers = append(report.Timers, checkTimer{

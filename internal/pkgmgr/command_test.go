@@ -53,7 +53,7 @@ func TestArgvTable(t *testing.T) {
 			"dnf check-update -q --cacheonly"},
 		{"dnf sizes", BuildSizesDNF(),
 			"dnf repoquery --upgrades --latest-limit 1 -q --cacheonly " +
-				"--qf %{name}.%{arch}|%{evr}|%{downloadsize}\n"},
+				"--qf '%{name}.%{arch}|%{evr}|%{downloadsize}\n'"},
 		{"dnf security", BuildSecurityDNF(),
 			"dnf updateinfo list --security -q --cacheonly"},
 		{"dnf refresh", mustRefresh(t, updates.ManagerDNF),
@@ -124,7 +124,7 @@ func TestRPMQueryArgv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildInstalledVersionsDNF: %v", err)
 	}
-	want := "rpm -q --qf %{NAME}.%{ARCH}|%|EPOCH?{%{EPOCH}:}|%{VERSION}-%{RELEASE}\n" +
+	want := "rpm -q --qf '%{NAME}.%{ARCH}|%|EPOCH?{%{EPOCH}:}|%{VERSION}-%{RELEASE}\n'" +
 		" glibc kernel-core"
 	if got := cmd.String(); got != want {
 		t.Errorf("\n got %q\nwant %q", got, want)
