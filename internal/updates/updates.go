@@ -7,6 +7,7 @@ package updates
 
 import (
 	"context"
+	"io"
 	"sort"
 	"strings"
 
@@ -314,6 +315,14 @@ type Plan struct {
 	// Commands run in order, and are what the confirm dialog shows. The
 	// snapshot commands are already in it when one is taken.
 	Commands []Command
+	// HandOff marks, by index into Commands, the steps that run with the
+	// terminal handed over to them (Backend.HandOff) rather than as runner
+	// steps with no terminal at all. Nil when every step is a runner step.
+	HandOff map[int]bool
+	// Explain are the sentences the confirm dialog adds above the sequence
+	// about how its commands behave: the config-file policy an apt upgrade
+	// runs with, or the terminal a hand-off takes over.
+	Explain []string
 	// Notes are the caveats that apply to this plan.
 	Notes []string
 }
@@ -330,6 +339,22 @@ type PlanOptions struct {
 	// Snapshot asks for the pre/post snapper pair. A machine with nowhere to
 	// take one ignores it: the plan says so rather than pretending.
 	Snapshot bool
+}
+
+// IsHandOff reports that the command at index i runs with the terminal handed
+// over to it.
+func (p Plan) IsHandOff(i int) bool { return p.HandOff[i] }
+
+// Process is a command prepared to run with the terminal handed over to it,
+// not started yet. Its method set is Bubble Tea's ExecCommand, so the UI
+// passes it to tea.Exec — which suspends the program, gives the terminal to
+// the child and restores the screen when it exits — without importing
+// os/exec: the exec boundary stays in the backend package.
+type Process interface {
+	Run() error
+	SetStdin(io.Reader)
+	SetStdout(io.Writer)
+	SetStderr(io.Writer)
 }
 
 // Preview renders every command of the plan, one per line, without a runner:
@@ -445,6 +470,12 @@ type Backend interface {
 	History(ctx context.Context) ([]Transaction, error)
 	// Run executes a previously previewed command.
 	Run(ctx context.Context, cmd Command) (string, error)
+	// HandOff prepares a previously previewed command to run with the
+	// terminal handed over to it, for the steps a plan marks as hand-offs:
+	// programs that are interactive by design and cannot run as a runner
+	// step, which has no terminal. The Process runs exactly what Preview
+	// showed.
+	HandOff(cmd Command) (Process, error)
 
 	// BuildTimerAction enables or disables an unattended-update unit.
 	BuildTimerAction(action, unit string) (Command, error)

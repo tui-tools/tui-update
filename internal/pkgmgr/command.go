@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	kitpkg "github.com/tui-tools/tui-kit/pkgmgr"
 	"github.com/tui-tools/tui-update/internal/updates"
 )
 
@@ -280,7 +281,8 @@ func BuildUpgrade(manager, mode string, omarchy bool) (updates.Command, error) {
 			return updates.Command{
 				Argv: []string{OmarchyUpdate, "run", "--no-reboot"},
 				Description: "Upgrade every package through " + OmarchyUpdate +
-					", which restarts what changed and never reboots on its own",
+					", which restarts what changed and never reboots on its own; " +
+					"it gets the terminal, so answer it there",
 				Destructive: true,
 			}, nil
 		}
@@ -297,9 +299,11 @@ func BuildUpgrade(manager, mode string, omarchy bool) (updates.Command, error) {
 			description = "Upgrade every package, adding and removing what the " +
 				"new dependencies need"
 		}
+		argv := append([]string{"apt-get", "-y"}, aptKeepConfig...)
 		return updates.Command{
-			Argv:        []string{"apt-get", "-y", verb},
-			Description: description,
+			Argv:        append(argv, verb),
+			Description: description + "; " + aptKeepConfigSentence,
+			Env:         kitpkg.APTEnv(),
 			Destructive: true,
 		}, nil
 	case updates.ManagerDNF:
@@ -319,6 +323,49 @@ func BuildUpgrade(manager, mode string, omarchy bool) (updates.Command, error) {
 	default:
 		return updates.Command{}, fmt.Errorf("pkgmgr: unknown package manager %q", manager)
 	}
+}
+
+// aptKeepConfig is the answer dpkg gets, ahead of time, to the one question
+// an upgrade can still ask with DEBIAN_FRONTEND=noninteractive: a package
+// ships a new version of a config file this machine has changed. dpkg asks
+// that on the terminal, not through debconf, and since tui-kit v0.4.4 a runner
+// child has no terminal to ask on, so without an answer the upgrade fails at
+// that package.
+//
+//   - --force-confdef takes the package's default where it has one: a file
+//     nobody changed is replaced silently, as it would be anyway.
+//   - --force-confold keeps the local version of a file somebody did change;
+//     the package's new one is left beside it as <file>.dpkg-dist to compare.
+//
+// Keeping the local file is the only answer that cannot break a running
+// service's configuration behind the reader's back.
+var aptKeepConfig = []string{
+	"-o", "Dpkg::Options::=--force-confdef",
+	"-o", "Dpkg::Options::=--force-confold",
+}
+
+// aptKeepConfigSentence is what the plan and the confirm dialog say about
+// aptKeepConfig, so the reader agrees to the policy and not only to the flags.
+const aptKeepConfigSentence = "a config file changed on this machine keeps " +
+	"the local version, and the package's new one is left beside it as " +
+	".dpkg-dist"
+
+// aptNoQuestionsSentence is the confirm dialog's account of everything an
+// apt upgrade would otherwise have asked: kitpkg.APTEnv and aptKeepConfig,
+// in the words of what they do.
+const aptNoQuestionsSentence = "apt asks nothing: debconf takes its " +
+	"defaults, needrestart restarts the services left on replaced libraries, " +
+	"and " + aptKeepConfigSentence + "."
+
+// IsHandOff reports that a command is not a runner step but a hand-off: it
+// runs with the terminal handed over to it (tea.Exec) instead of in a session
+// of its own with no terminal, because it is interactive by design.
+//
+// Omarchy Server's updater is the one such command: it wraps the pacman
+// transaction in its own prompts, sudo's and gum's, and a runner child —
+// which since tui-kit v0.4.4 has no controlling terminal — cannot answer them.
+func IsHandOff(cmd updates.Command) bool {
+	return len(cmd.Argv) > 0 && cmd.Argv[0] == OmarchyUpdate
 }
 
 // errNoSecurityUpgrade is the refusal a manager gets when it is asked for an

@@ -256,6 +256,9 @@ func CapabilitiesFor(manager string) updates.Capabilities {
 // prefix that binary will really be called with.
 func (r *Real) Preview(cmd updates.Command) string {
 	if run := r.runnerFor(cmd); run != nil {
+		if IsHandOff(cmd) {
+			return handOffPreview(run, cmd)
+		}
 		return run.Preview(cmd)
 	}
 	return cmd.String()
@@ -997,6 +1000,13 @@ func assemblePlan(manager string, opts updates.PlanOptions,
 	upgrade, err := BuildUpgrade(manager, opts.Mode, omarchy)
 	if err != nil {
 		return builtPlan{Error: err}
+	}
+	if IsHandOff(upgrade) {
+		plan.HandOff = map[int]bool{len(plan.Commands): true}
+		plan.Explain = append(plan.Explain, handOffSentence)
+	}
+	if manager == updates.ManagerAPT {
+		plan.Explain = append(plan.Explain, aptNoQuestionsSentence)
 	}
 	plan.Commands = append(plan.Commands, upgrade)
 	if take {

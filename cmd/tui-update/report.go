@@ -52,13 +52,17 @@ func runReport(cfg config.Config, opts options, out io.Writer) error {
 	}
 	if opts.demo {
 		// The fake imitates one of the three managers, and which one decides
-		// which command builders and which parser the session exercised. It is
-		// taken from the backend package's own constant rather than from the
-		// fake's Name, which answers with the imitated manager and would leave
-		// a demo report indistinguishable from a live one.
+		// which command builders and which parser the session exercised. The
+		// backend is reported as "demo" and the imitated manager (the sample
+		// machine's, --demo-machine) as a field of its own, so a demo report
+		// is never indistinguishable from a live one.
 		info.Backend = "demo"
+		imitated := pkgmgr.DemoManager
+		if fake, err := demoBackend(opts); err == nil {
+			imitated = fake.Name()
+		}
 		info.Extra = append(info.Extra, report.Field{
-			Key: "demo backend", Value: pkgmgr.DemoManager,
+			Key: "demo backend", Value: imitated,
 		})
 	}
 	// The helper line describes the real machine even under --demo, where the
