@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-kit/theme"
+	"github.com/tui-tools/tui-kit/ui"
 	"github.com/tui-tools/tui-update/internal/pkgmgr"
 	"github.com/tui-tools/tui-update/internal/updates"
 )
@@ -142,8 +143,8 @@ func TestPlanShowsTheWholeSequence(t *testing.T) {
 	for _, want := range []string{
 		"Restart classification",
 		"snapshot before: yes",
-		"snapper create -c root -t pre",
-		"snapper create -c root -t post",
+		"snapper -c root create -t pre",
+		"snapper -c root create -t post",
 		"dnf makecache --refresh -q",
 		"dnf -y upgrade",
 		"never reboots by itself",
@@ -155,10 +156,10 @@ func TestPlanShowsTheWholeSequence(t *testing.T) {
 
 	// The order is the argument: snapshot, refresh, upgrade, snapshot.
 	want := []string{
-		"snapper create -c root -t pre",
+		"snapper -c root create -t pre",
 		"dnf makecache --refresh -q",
 		"dnf -y upgrade",
-		"snapper create -c root -t post",
+		"snapper -c root create -t post",
 	}
 	if len(a.plan.Commands) != len(want) {
 		t.Fatalf("the plan has %d commands, want %d: %v",
@@ -194,8 +195,8 @@ func TestApplyConfirmsBeforeRunningAnything(t *testing.T) {
 		t.Errorf("an upgrade is a destructive change and must be painted so")
 	}
 	for _, want := range []string{
-		"snapper create -c root -t pre", "dnf -y upgrade",
-		"snapper create -c root -t post",
+		"snapper -c root create -t pre", "dnf -y upgrade",
+		"snapper -c root create -t post",
 	} {
 		if !strings.Contains(a.confirm.Command, want) {
 			t.Errorf("the dialog does not show %q:\n%s", want, a.confirm.Command)
@@ -223,15 +224,25 @@ func TestApplyRunsTheSequenceInOrder(t *testing.T) {
 		t.Fatalf("Plan: %v", err)
 	}
 	send(a, plannedMsg{plan: plan, apply: true})
-	key(a, "y")
+	next := key(a, "y")
 
 	if a.mode != modeApply {
 		t.Fatalf("mode = %v, want the apply screen", a.mode)
 	}
+	// Each step is started by the app itself, from the command the previous
+	// step returned, exactly as the runtime would.
 	for step := 0; step < len(plan.Commands); step++ {
-		cmd := plan.Commands[step]
-		out, runErr := fake.Run(t.Context(), cmd)
-		send(a, stepMsg{index: step, cmd: cmd, output: out, err: runErr})
+		if next == nil {
+			t.Fatalf("step %d: nothing was started", step)
+		}
+		msg, ok := next().(stepMsg)
+		if !ok {
+			t.Fatalf("step %d: the app did not start a step", step)
+		}
+		if msg.err != nil {
+			t.Fatalf("step %d (%s): %v", step, msg.cmd, msg.err)
+		}
+		next = send(a, msg)
 	}
 	if !a.applyDone {
 		t.Errorf("the sequence did not finish")
@@ -239,12 +250,18 @@ func TestApplyRunsTheSequenceInOrder(t *testing.T) {
 	if a.busy {
 		t.Errorf("the app is still busy after the last command")
 	}
+	if a.statusKind != ui.StatusOK {
+		t.Errorf("status = %q, want the finished upgrade", a.status)
+	}
 
+	// What ran is what the dialog previewed, but for the post snapshot's
+	// pre number, which is filled in from what the pre snapshot printed.
 	ran := fake.Ran()
 	if len(ran) != len(plan.Commands) {
 		t.Fatalf("ran %d commands, want %d", len(ran), len(plan.Commands))
 	}
-	for i, cmd := range plan.Commands {
+	bound := updates.BindPreNumber(plan.Commands, "42")
+	for i, cmd := range bound {
 		if ran[i].String() != cmd.String() {
 			t.Errorf("command %d: ran %q, previewed %q",
 				i, ran[i].String(), cmd.String())
@@ -535,7 +552,7 @@ func TestSnapshotToggleRePlansBeforeTheConfirm(t *testing.T) {
 	primeScreen(t, a, fake, "plan")
 
 	with := strings.Join(a.planLines(), "\n")
-	if !strings.Contains(with, "snapper create -c root -t pre") ||
+	if !strings.Contains(with, "snapper -c root create -t pre") ||
 		!strings.Contains(with, "snapshot before: yes") {
 		t.Fatalf("the plan opens without the snapshot:\n%s", with)
 	}
@@ -580,7 +597,7 @@ func TestSnapshotToggleRePlansBeforeTheConfirm(t *testing.T) {
 	if a.mode != modeConfirm {
 		t.Fatalf("U did not open the confirm dialog (mode %v)", a.mode)
 	}
-	if !strings.Contains(a.confirm.Command, "snapper create -c root -t pre") {
+	if !strings.Contains(a.confirm.Command, "snapper -c root create -t pre") {
 		t.Errorf("the dialog lost the snapshot:\n%s", a.confirm.Command)
 	}
 }

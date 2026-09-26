@@ -133,7 +133,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.3.0/tui-update_0.3.0_linux_amd64.tar.gz | tar -xz tui-update
+curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.3.1/tui-update_0.3.1_linux_amd64.tar.gz | tar -xz tui-update
 sudo install -m0755 tui-update /usr/local/bin/tui-update
 ```
 
@@ -222,7 +222,8 @@ is `fedora`, the machine described above.
   to the package names when none of them answered. The screen always says which
   it was.
 - **The snapshot.** `snapshot before: yes` with the exact
-  `snapper create -c root -t pre …` that would run, or `no` with the reason:
+  `snapper -c root create -t pre …` and `-t post --pre-number <pre-number> …`
+  that would run, or `no` with the reason:
   snapper is not installed, or it has no configuration covering `/`.
 - **The manager's own dry run**, quoted: `apt-get -s upgrade`,
   `dnf upgrade --assumeno`. On pacman there is none that does not first
@@ -337,6 +338,20 @@ values to the preview and to the runner, so what you read is what executes.
 
 The sequence is run one command at a time, and the output streams into a pane
 as each one answers, so a long download is visible rather than a frozen screen.
+The pane reads that output the way a terminal would: a line a program redraws
+in place with a carriage return, like dpkg's `(Reading database ...` counter,
+shows only its last state, and escape sequences are stripped the same way the
+status line strips them.
+
+**The snapshot pair is paired by number.** snapper links a post snapshot to its
+pre one with `--pre-number`, and that number only exists once the pre snapshot
+has been taken. So the dialog shows the post step with `<pre-number>` in its
+place, the number `snapper create --print-number` prints for the pre snapshot
+fills it in, and the apply pane shows the post command exactly as it then runs.
+If the pre snapshot fails, or prints no number, the sequence stops there and
+the upgrade does not run. If a step fails after the pre snapshot was taken, the
+pane and the status line name that snapshot and the
+`snapper -c root delete <n>` that removes it, so it is not left behind unseen.
 
 ## Nothing asks behind the screen
 
@@ -499,14 +514,14 @@ Every one of these is previewed and confirmed first.
 
 | | What runs |
 | --- | --- |
-| snapshot before | `snapper create -c root -t pre -d "…" --print-number` |
+| snapshot before | `snapper -c root create -t pre -d "…" --print-number` |
 | refresh (apt) | `apt-get update` |
 | refresh (dnf) | `dnf makecache --refresh -q` |
 | upgrade (pacman) | `pacman -Syu --noconfirm` |
 | upgrade (Omarchy Server) | `omarchy-server-update run --no-reboot`, with the terminal handed over |
 | upgrade (apt) | `env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade`, or `dist-upgrade` |
 | upgrade (dnf) | `dnf -y upgrade`, or `dnf -y upgrade --security` |
-| snapshot after | `snapper create -c root -t post -d "…" --print-number` |
+| snapshot after | `snapper -c root create -t post --pre-number <n> -d "…" --print-number`, `<n>` being the number the pre snapshot printed |
 | hold (apt) | `apt-mark hold <pkg>` / `apt-mark unhold <pkg>` |
 | hold (dnf) | `dnf versionlock add <pkg>` / `dnf versionlock delete <pkg>` |
 | timers | `systemctl enable --now <unit>` / `systemctl disable --now <unit>` |

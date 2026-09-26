@@ -8,6 +8,7 @@ package updates
 import (
 	"context"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -344,6 +345,56 @@ type PlanOptions struct {
 // IsHandOff reports that the command at index i runs with the terminal handed
 // over to it.
 func (p Plan) IsHandOff(i int) bool { return p.HandOff[i] }
+
+// PreNumber stands, in the post snapshot's argv, for the number the pre
+// snapshot prints. snapper links a post snapshot to its pre one by that
+// number (`--pre-number`), and the number only exists once the pre snapshot
+// has been taken: after the preview was shown and confirmed. So the preview
+// carries this placeholder, and the running sequence replaces it
+// (BindPreNumber) with what the pre step printed before the post step starts.
+const PreNumber = "<pre-number>"
+
+// IsSnapshotPre reports that the command at index i is the pre snapshot, the
+// step whose printed number the post snapshot needs. The pre snapshot is
+// always the first command of a plan that takes one.
+func (p Plan) IsSnapshotPre(i int) bool { return p.TakeSnapshot && i == 0 }
+
+// snapshotNumberRe is a snapshot number as `snapper create --print-number`
+// prints it.
+var snapshotNumberRe = regexp.MustCompile(`^[0-9]+$`)
+
+// SnapshotNumber reads the number `snapper create --print-number` printed.
+// The output may carry more than the number (a warning from sudo or snapper
+// ahead of it), so the last non-blank line is the answer, and it has to be a
+// number and nothing else: anything else is reported as not found rather than
+// guessed at.
+func SnapshotNumber(output string) (string, bool) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if !snapshotNumberRe.MatchString(last) {
+		return "", false
+	}
+	return last, true
+}
+
+// BindPreNumber returns the commands with every PreNumber argument replaced
+// by number. The commands are copied, not changed in place: the plan the
+// confirm dialog showed stays what it was.
+func BindPreNumber(commands []Command, number string) []Command {
+	bound := make([]Command, len(commands))
+	for i, cmd := range commands {
+		argv := make([]string, len(cmd.Argv))
+		for j, arg := range cmd.Argv {
+			if arg == PreNumber {
+				arg = number
+			}
+			argv[j] = arg
+		}
+		cmd.Argv = argv
+		bound[i] = cmd
+	}
+	return bound
+}
 
 // Process is a command prepared to run with the terminal handed over to it,
 // not started yet. Its method set is Bubble Tea's ExecCommand, so the UI

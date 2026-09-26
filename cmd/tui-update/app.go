@@ -87,6 +87,11 @@ type app struct {
 	// applyDone reports that the sequence finished, so the screen can offer
 	// the reboot.
 	applyDone bool
+	// preNumber is the number the pre snapshot of the running sequence
+	// printed, once it has: the post snapshot is bound to it, and a step
+	// that fails after it names it, so the snapshot left without a partner
+	// can be found and removed.
+	preNumber string
 
 	status     string
 	statusKind ui.StatusKind
@@ -387,7 +392,10 @@ func (a *app) applyBody(p updates.Plan) string {
 	switch {
 	case p.TakeSnapshot:
 		lines = append(lines, "A pre-upgrade snapshot is taken first, and a "+
-			"post one after; `snapper status` between them lists what changed.")
+			"post one after; `snapper status` between them lists what changed.",
+			"The post snapshot is paired with the pre one: "+updates.PreNumber+
+				" is the number the pre snapshot prints, filled in once it ran. "+
+				"If the pre snapshot fails, nothing else runs.")
 	case p.Snapshot.Available:
 		lines = append(lines, "No snapshot: this machine could take one, and "+
 			"it was turned off for this plan.")
@@ -406,17 +414,24 @@ func (a *app) applyBody(p updates.Plan) string {
 // handleStep records one finished command and starts the next one.
 func (a *app) handleStep(msg stepMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		a.busy, a.applyDone = false, true
-		a.applyLog = append(a.applyLog, "✗ "+firstLine(msg.err.Error()))
-		if out := strings.TrimSpace(msg.output); out != "" {
-			a.applyLog = append(a.applyLog, splitOutput(out)...)
-		}
-		a.setStatus(ui.StatusError, "the sequence stopped at "+msg.cmd.String())
-		a.scrollToEnd()
-		return a, a.load()
+		return a.stopSequence(msg, firstLine(msg.err.Error()))
 	}
 	if out := strings.TrimSpace(msg.output); out != "" {
 		a.applyLog = append(a.applyLog, splitOutput(out)...)
+	}
+	if a.plan.IsSnapshotPre(msg.index) {
+		// The post snapshot is linked to this one by the number it printed;
+		// without it snapper refuses the post one, so a pre snapshot that
+		// printed no number stops the sequence before the upgrade runs.
+		number, ok := updates.SnapshotNumber(msg.output)
+		if !ok {
+			return a.stopSequence(msg, "the pre snapshot printed no number, "+
+				"so the post one could not be paired with it")
+		}
+		a.preNumber = number
+		a.plan.Commands = updates.BindPreNumber(a.plan.Commands, number)
+		a.applyLog = append(a.applyLog,
+			"  pre snapshot "+number+": the post one is paired with it")
 	}
 	if msg.handOff {
 		a.applyLog = append(a.applyLog, "✓ done (its output was on the terminal)")
@@ -441,9 +456,32 @@ func (a *app) handleStep(msg stepMsg) (tea.Model, tea.Cmd) {
 	return a, a.load()
 }
 
-// splitOutput turns a command's output into pane lines.
-func splitOutput(out string) []string {
-	return strings.Split(strings.TrimRight(out, "\n"), "\n")
+// stopSequence ends a sequence at the step that failed. Nothing after it
+// runs: a failed pre snapshot never lets the upgrade go ahead without one.
+//
+// When the pre snapshot had already been taken, the pane and the status line
+// name it, because it is now a snapshot with no post partner: the reader
+// decides whether to keep it as the "before" state or delete it, and needs its
+// number for either.
+func (a *app) stopSequence(msg stepMsg, reason string) (tea.Model, tea.Cmd) {
+	a.busy, a.applyDone = false, true
+	a.applyLog = append(a.applyLog, "✗ "+reason)
+	// A step that failed has not had its output shown yet; one that ran and
+	// is refused afterwards (a pre snapshot with no number) already has.
+	if out := strings.TrimSpace(msg.output); msg.err != nil && out != "" {
+		a.applyLog = append(a.applyLog, splitOutput(out)...)
+	}
+	status := "the sequence stopped at " + msg.cmd.String()
+	if a.preNumber != "" {
+		orphan := fmt.Sprintf("pre snapshot %s has no post snapshot; "+
+			"`snapper -c %s delete %s` removes it",
+			a.preNumber, a.plan.Snapshot.Config, a.preNumber)
+		a.applyLog = append(a.applyLog, "  "+orphan)
+		status += "; " + orphan
+	}
+	a.setStatus(ui.StatusError, status)
+	a.scrollToEnd()
+	return a, a.load()
 }
 
 // scrollToEnd keeps the apply pane pinned to the newest output.
@@ -505,7 +543,7 @@ func (a *app) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	a.mode = modeApply
-	a.applyStep, a.applyDone = 0, false
+	a.applyStep, a.applyDone, a.preNumber = 0, false, ""
 	a.applyLog = append([]string{answer.title, ""},
 		a.startLines(0, answer.commands[0])...)
 	a.scrollToEnd()

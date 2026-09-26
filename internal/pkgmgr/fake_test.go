@@ -23,8 +23,8 @@ func TestDemoParity(t *testing.T) {
 			name: "the plain upgrade, with the snapshot",
 			opts: updates.PlanOptions{Mode: updates.UpgradeDefault, Snapshot: true},
 			want: []string{
-				"snapper create -c root -t pre", "dnf makecache --refresh -q",
-				"dnf -y upgrade", "snapper create -c root -t post",
+				"snapper -c root create -t pre", "dnf makecache --refresh -q",
+				"dnf -y upgrade", "snapper -c root create -t post",
 			},
 			deny: []string{"--security"},
 		},
@@ -38,8 +38,8 @@ func TestDemoParity(t *testing.T) {
 			name: "the security-only upgrade",
 			opts: updates.PlanOptions{Mode: updates.UpgradeSecurity, Snapshot: true},
 			want: []string{
-				"snapper create -c root -t pre", "dnf -y upgrade --security",
-				"snapper create -c root -t post",
+				"snapper -c root create -t pre", "dnf -y upgrade --security",
+				"snapper -c root create -t post",
 			},
 		},
 	}
@@ -80,9 +80,20 @@ func TestDemoSecurityUpgradeLeavesTheRestAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	for _, cmd := range plan.Commands {
-		if _, runErr := fake.Run(t.Context(), cmd); runErr != nil {
-			t.Fatalf("Run(%s): %v", cmd, runErr)
+	commands := plan.Commands
+	for i := 0; i < len(commands); i++ {
+		out, runErr := fake.Run(t.Context(), commands[i])
+		if runErr != nil {
+			t.Fatalf("Run(%s): %v", commands[i], runErr)
+		}
+		// The sequence carries the pre snapshot's number to the post one, as
+		// the apply screen does.
+		if plan.IsSnapshotPre(i) {
+			number, ok := updates.SnapshotNumber(out)
+			if !ok {
+				t.Fatalf("the pre snapshot printed no number: %q", out)
+			}
+			commands = updates.BindPreNumber(commands, number)
 		}
 	}
 	model, err := fake.Load(t.Context())
@@ -183,4 +194,26 @@ func heldIn(t *testing.T, fake *Fake, name string) bool {
 	}
 	t.Fatalf("%q is not on the sample machine's pending list", name)
 	return false
+}
+
+// TestDemoSnapperRefusesAnUnpairedPost: the sample machine answers a post
+// snapshot the way snapper does, so a sequence that did not carry the pre
+// number over fails in --demo and in the tests, not first on a real machine.
+func TestDemoSnapperRefusesAnUnpairedPost(t *testing.T) {
+	fake := NewFake()
+	plan, err := fake.Plan(t.Context(), updates.PlanOptions{
+		Mode: updates.UpgradeDefault, Snapshot: true,
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	post := plan.Commands[len(plan.Commands)-1]
+	if _, err := fake.Run(t.Context(), post); err == nil {
+		t.Errorf("a post snapshot with the placeholder was accepted: %s", post)
+	}
+	bound := updates.BindPreNumber(plan.Commands, "42")
+	out, err := fake.Run(t.Context(), bound[len(bound)-1])
+	if err != nil || out != "43" {
+		t.Errorf("the paired post snapshot = %q, %v; want 43", out, err)
+	}
 }

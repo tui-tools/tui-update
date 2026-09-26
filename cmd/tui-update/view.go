@@ -323,7 +323,9 @@ func (a *app) planLines() []string {
 		lines = append(lines,
 			"  snapshot before: yes  (s turns it off)",
 			"  "+plan.Snapshot.Pre.String(),
-			"  "+plan.Snapshot.Post.String())
+			"  "+plan.Snapshot.Post.String(),
+			"  "+updates.PreNumber+" is the number the pre snapshot prints, "+
+				"filled in once it ran")
 	case plan.Snapshot.Available:
 		lines = append(lines, "  snapshot before: no  (turned off — s turns "+
 			"it back on)")

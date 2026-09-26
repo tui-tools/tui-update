@@ -483,6 +483,13 @@ func BuildHold(manager, action, name string) (updates.Command, error) {
 // decorative: the two are linked, so `snapper status <pre>..<post>` lists
 // exactly what the upgrade changed on disk. The pre snapshot is taken before
 // the upgrade runs and the post one after it succeeds.
+//
+// The link is made by number: a post snapshot is refused ("Missing or invalid
+// pre-number") without `--pre-number`, and that number is only known once the
+// pre snapshot has printed it (`--print-number`). So the post command carries
+// updates.PreNumber in its place, which the preview shows as it is, and the
+// running sequence fills it in (updates.BindPreNumber) before the post step
+// starts.
 func BuildSnapshot(config, kind, description string) (updates.Command, error) {
 	if !snapperConfigRe.MatchString(config) {
 		return updates.Command{}, fmt.Errorf(
@@ -496,11 +503,16 @@ func BuildSnapshot(config, kind, description string) (updates.Command, error) {
 		return updates.Command{}, fmt.Errorf(
 			"pkgmgr: a snapshot description is one line")
 	}
+	// -c names the configuration only before the command: after `create` it
+	// is --cleanup-algorithm, which would take the config name as an
+	// algorithm and leave the default configuration to be used.
+	argv := []string{"snapper", "-c", config, "create", "-t", kind}
+	if kind == "post" {
+		argv = append(argv, "--pre-number", updates.PreNumber)
+	}
+	argv = append(argv, "-d", description, "--print-number")
 	return updates.Command{
-		Argv: []string{
-			"snapper", "create", "-c", config, "-t", kind,
-			"-d", description, "--print-number",
-		},
+		Argv: argv,
 		Description: "Take a " + kind + "-upgrade snapshot of the " + config +
 			" subvolume",
 	}, nil

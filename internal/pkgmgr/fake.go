@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/tui-tools/tui-kit/runner"
@@ -548,13 +549,41 @@ func (f *Fake) apply(cmd updates.Command) (string, error) {
 		return f.applyVersionlock(argv)
 	case argv[0] == "dnf" && argv[1] == "makecache":
 		return "Metadata cache created.", nil
-	case argv[0] == "snapper" && argv[1] == "create":
-		return "42", nil
+	case argv[0] == "snapper" && slices.Contains(argv, "create"):
+		return f.applySnapshot(argv)
 	case argv[0] == "systemctl":
 		return f.applyTimer(argv)
 	default:
 		return "ok", nil
 	}
+}
+
+// demoPreNumber is the number the sample machine's pre snapshot prints, and
+// the post one the next.
+const demoPreNumber = "42"
+
+// applySnapshot answers a snapper create the way snapper does: a post snapshot
+// without a real pre number is refused with snapper's own message, so a
+// sequence that forgot to carry the number fails here as it would on a
+// machine, not only in the lab.
+func (f *Fake) applySnapshot(argv []string) (string, error) {
+	for i, arg := range argv {
+		if arg != "--pre-number" {
+			continue
+		}
+		if i+1 >= len(argv) || argv[i+1] != demoPreNumber {
+			return "Missing or invalid pre-number.",
+				fmt.Errorf("snapper: Missing or invalid pre-number")
+		}
+		return "43", nil
+	}
+	for i, arg := range argv {
+		if arg == "-t" && i+1 < len(argv) && argv[i+1] == "post" {
+			return "Missing or invalid pre-number.",
+				fmt.Errorf("snapper: Missing or invalid pre-number")
+		}
+	}
+	return demoPreNumber, nil
 }
 
 // applyUpgrade empties the pending list, or only its security half when the

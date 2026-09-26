@@ -255,6 +255,11 @@ if [[ -e /etc/snapper/configs/root ]] && command -v snapper >/dev/null; then
   check "the snapshot configuration is named" \
     "$bin --check" \
     '"snapshotConfig": "root"'
+  # snapper refuses a post snapshot without --pre-number ("Missing or invalid
+  # pre-number"), so the post command the plan would run has to carry it, with
+  # the placeholder the pre snapshot's printed number replaces at run time.
+  check_report "the post snapshot is paired with the pre one (--pre-number)" \
+    '"--pre-number"'
 else
   check "no snapshot is claimed on a machine without a snapper root config" \
     "$bin --check" \
@@ -468,8 +473,12 @@ check "and says so on the mode line" \
 # release and machine fields, never from its nodename, and on a guest called
 # "fedora" or "ubuntu" — which is most of them — the host name is a substring
 # of the distribution's own. Everything else in the block is searched.
+# The host name is matched as a whole token: a guest named after its
+# distribution (omarchy) would otherwise match a helper binary's name
+# (omarchy-server-update), which is not the machine's name leaking.
+host_re="(^|[^A-Za-z0-9_-])$(uname -n)([^A-Za-z0-9_-]|\$)"
 check "report leaks neither a home path nor the host name" \
-  "$bin --report | grep -vE '^(distro|kernel): ' | grep -cE '/home/|$(uname -n)' || true" \
+  "$bin --report | grep -vE '^(distro|kernel): ' | grep -cE '/home/|$host_re' || true" \
   '^0$'
 
 if [[ $fail -eq 0 ]]; then
