@@ -23,8 +23,8 @@ func TestDemoParity(t *testing.T) {
 			name: "the plain upgrade, with the snapshot",
 			opts: updates.PlanOptions{Mode: updates.UpgradeDefault, Snapshot: true},
 			want: []string{
-				"snapper create -c root -t pre", "dnf makecache --refresh -q",
-				"dnf -y upgrade", "snapper create -c root -t post",
+				"snapper -c root create -t pre", "dnf makecache --refresh -q",
+				"dnf -y upgrade", "snapper -c root create -t post",
 			},
 			deny: []string{"--security"},
 		},
@@ -38,8 +38,8 @@ func TestDemoParity(t *testing.T) {
 			name: "the security-only upgrade",
 			opts: updates.PlanOptions{Mode: updates.UpgradeSecurity, Snapshot: true},
 			want: []string{
-				"snapper create -c root -t pre", "dnf -y upgrade --security",
-				"snapper create -c root -t post",
+				"snapper -c root create -t pre", "dnf -y upgrade --security",
+				"snapper -c root create -t post",
 			},
 		},
 	}

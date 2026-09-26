@@ -503,7 +503,10 @@ func BuildSnapshot(config, kind, description string) (updates.Command, error) {
 		return updates.Command{}, fmt.Errorf(
 			"pkgmgr: a snapshot description is one line")
 	}
-	argv := []string{"snapper", "create", "-c", config, "-t", kind}
+	// -c names the configuration only before the command: after `create` it
+	// is --cleanup-algorithm, which would take the config name as an
+	// algorithm and leave the default configuration to be used.
+	argv := []string{"snapper", "-c", config, "create", "-t", kind}
 	if kind == "post" {
 		argv = append(argv, "--pre-number", updates.PreNumber)
 	}

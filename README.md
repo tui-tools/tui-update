@@ -222,7 +222,7 @@ is `fedora`, the machine described above.
   to the package names when none of them answered. The screen always says which
   it was.
 - **The snapshot.** `snapshot before: yes` with the exact
-  `snapper create -c root -t pre …` and `-t post --pre-number <pre-number> …`
+  `snapper -c root create -t pre …` and `-t post --pre-number <pre-number> …`
   that would run, or `no` with the reason:
   snapper is not installed, or it has no configuration covering `/`.
 - **The manager's own dry run**, quoted: `apt-get -s upgrade`,
@@ -514,14 +514,14 @@ Every one of these is previewed and confirmed first.
 
 | | What runs |
 | --- | --- |
-| snapshot before | `snapper create -c root -t pre -d "…" --print-number` |
+| snapshot before | `snapper -c root create -t pre -d "…" --print-number` |
 | refresh (apt) | `apt-get update` |
 | refresh (dnf) | `dnf makecache --refresh -q` |
 | upgrade (pacman) | `pacman -Syu --noconfirm` |
 | upgrade (Omarchy Server) | `omarchy-server-update run --no-reboot`, with the terminal handed over |
 | upgrade (apt) | `env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade`, or `dist-upgrade` |
 | upgrade (dnf) | `dnf -y upgrade`, or `dnf -y upgrade --security` |
-| snapshot after | `snapper create -c root -t post --pre-number <n> -d "…" --print-number`, `<n>` being the number the pre snapshot printed |
+| snapshot after | `snapper -c root create -t post --pre-number <n> -d "…" --print-number`, `<n>` being the number the pre snapshot printed |
 | hold (apt) | `apt-mark hold <pkg>` / `apt-mark unhold <pkg>` |
 | hold (dnf) | `dnf versionlock add <pkg>` / `dnf versionlock delete <pkg>` |
 | timers | `systemctl enable --now <unit>` / `systemctl disable --now <unit>` |

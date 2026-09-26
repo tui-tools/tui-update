@@ -143,8 +143,8 @@ func TestPlanShowsTheWholeSequence(t *testing.T) {
 	for _, want := range []string{
 		"Restart classification",
 		"snapshot before: yes",
-		"snapper create -c root -t pre",
-		"snapper create -c root -t post",
+		"snapper -c root create -t pre",
+		"snapper -c root create -t post",
 		"dnf makecache --refresh -q",
 		"dnf -y upgrade",
 		"never reboots by itself",
@@ -156,10 +156,10 @@ func TestPlanShowsTheWholeSequence(t *testing.T) {
 
 	// The order is the argument: snapshot, refresh, upgrade, snapshot.
 	want := []string{
-		"snapper create -c root -t pre",
+		"snapper -c root create -t pre",
 		"dnf makecache --refresh -q",
 		"dnf -y upgrade",
-		"snapper create -c root -t post",
+		"snapper -c root create -t post",
 	}
 	if len(a.plan.Commands) != len(want) {
 		t.Fatalf("the plan has %d commands, want %d: %v",
@@ -195,8 +195,8 @@ func TestApplyConfirmsBeforeRunningAnything(t *testing.T) {
 		t.Errorf("an upgrade is a destructive change and must be painted so")
 	}
 	for _, want := range []string{
-		"snapper create -c root -t pre", "dnf -y upgrade",
-		"snapper create -c root -t post",
+		"snapper -c root create -t pre", "dnf -y upgrade",
+		"snapper -c root create -t post",
 	} {
 		if !strings.Contains(a.confirm.Command, want) {
 			t.Errorf("the dialog does not show %q:\n%s", want, a.confirm.Command)
@@ -552,7 +552,7 @@ func TestSnapshotToggleRePlansBeforeTheConfirm(t *testing.T) {
 	primeScreen(t, a, fake, "plan")
 
 	with := strings.Join(a.planLines(), "\n")
-	if !strings.Contains(with, "snapper create -c root -t pre") ||
+	if !strings.Contains(with, "snapper -c root create -t pre") ||
 		!strings.Contains(with, "snapshot before: yes") {
 		t.Fatalf("the plan opens without the snapshot:\n%s", with)
 	}
@@ -597,7 +597,7 @@ func TestSnapshotToggleRePlansBeforeTheConfirm(t *testing.T) {
 	if a.mode != modeConfirm {
 		t.Fatalf("U did not open the confirm dialog (mode %v)", a.mode)
 	}
-	if !strings.Contains(a.confirm.Command, "snapper create -c root -t pre") {
+	if !strings.Contains(a.confirm.Command, "snapper -c root create -t pre") {
 		t.Errorf("the dialog lost the snapshot:\n%s", a.confirm.Command)
 	}
 }

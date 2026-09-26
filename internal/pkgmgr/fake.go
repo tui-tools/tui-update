@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/tui-tools/tui-kit/runner"
@@ -548,7 +549,7 @@ func (f *Fake) apply(cmd updates.Command) (string, error) {
 		return f.applyVersionlock(argv)
 	case argv[0] == "dnf" && argv[1] == "makecache":
 		return "Metadata cache created.", nil
-	case argv[0] == "snapper" && argv[1] == "create":
+	case argv[0] == "snapper" && slices.Contains(argv, "create"):
 		return f.applySnapshot(argv)
 	case argv[0] == "systemctl":
 		return f.applyTimer(argv)

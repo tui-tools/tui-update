@@ -91,7 +91,7 @@ func TestFailedPreSnapshotRunsNothingElse(t *testing.T) {
 		t.Errorf("done=%v busy=%v after the failed pre snapshot",
 			a.applyDone, a.busy)
 	}
-	if !strings.Contains(a.status, "the sequence stopped at snapper create") {
+	if !strings.Contains(a.status, "the sequence stopped at snapper -c root create") {
 		t.Errorf("status = %q", a.status)
 	}
 	if strings.Contains(a.status, "delete") {
