@@ -42,9 +42,15 @@ func TestArgvTable(t *testing.T) {
 		{"apt simulate dist", mustSimulate(t, updates.ManagerAPT,
 			updates.UpgradeDist), "apt-get -s dist-upgrade"},
 		{"apt upgrade", must(BuildUpgrade(updates.ManagerAPT,
-			updates.UpgradeDefault, false)), "apt-get -y upgrade"},
+			updates.UpgradeDefault, false)),
+			"DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y " +
+				"-o Dpkg::Options::=--force-confdef " +
+				"-o Dpkg::Options::=--force-confold upgrade"},
 		{"apt dist-upgrade", must(BuildUpgrade(updates.ManagerAPT,
-			updates.UpgradeDist, false)), "apt-get -y dist-upgrade"},
+			updates.UpgradeDist, false)),
+			"DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y " +
+				"-o Dpkg::Options::=--force-confdef " +
+				"-o Dpkg::Options::=--force-confold dist-upgrade"},
 		{"needrestart", must(BuildRestartProbe("needrestart")),
 			"needrestart -b"},
 

@@ -67,6 +67,12 @@ screenshots: build
 		--bin $(BIN)/$(TOOL) --name $(TOOL) --out docs/screenshots \
 		--screen main=jj --screen plan=p --screen confirm=pU \
 		--screen apply=pUy --screen timers=t --screen help=?
+	python3 $(KIT)/tools/render-screenshots.py \
+		--bin $(BIN)/$(TOOL) --name $(TOOL) --out docs/screenshots \
+		--args "--demo --demo-machine ubuntu" --screen confirm-apt=pU
+	python3 $(KIT)/tools/render-screenshots.py \
+		--bin $(BIN)/$(TOOL) --name $(TOOL) --out docs/screenshots \
+		--args "--demo --demo-machine omarchy" --screen confirm-omarchy=pU
 
 ## readme: regenerate the generated README sections from tool.json.
 readme:

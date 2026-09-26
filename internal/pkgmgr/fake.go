@@ -1,18 +1,38 @@
 package pkgmgr
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/tui-tools/tui-kit/runner"
 	"github.com/tui-tools/tui-update/internal/updates"
 )
 
-// demoManager is the manager the sample machine runs. dnf is the one with the
-// most to show — security advisories, per-package sizes, a real transaction
-// history — so it is the one --demo drives.
+// demoManager is the manager the default sample machine runs. dnf is the one
+// with the most to show — security advisories, per-package sizes, a real
+// transaction history — so it is the one plain --demo drives.
 const demoManager = updates.ManagerDNF
+
+// The sample machines --demo can drive, named the way --demo-machine takes
+// them. Each one builds and previews its commands exactly as the real backend
+// would on that kind of machine, so the behaviour a manager has that the
+// others do not — apt's non-interactive upgrade, Omarchy's updater handed the
+// terminal — is demonstrable too.
+const (
+	// DemoFedora is the default: dnf on Fedora.
+	DemoFedora = "fedora"
+	// DemoUbuntu is apt on Ubuntu, with needrestart installed.
+	DemoUbuntu = "ubuntu"
+	// DemoOmarchy is pacman on Omarchy Server, whose upgrade is
+	// omarchy-server-update run as a hand-off.
+	DemoOmarchy = "omarchy"
+)
+
+// DemoMachines lists the sample machines, the default first.
+func DemoMachines() []string { return []string{DemoFedora, DemoUbuntu, DemoOmarchy} }
 
 // Fake is an in-memory package manager. It backs --demo and the tests: every
 // key works, every command is built and previewed exactly as the real backend
@@ -25,28 +45,54 @@ const demoManager = updates.ManagerDNF
 type Fake struct {
 	model updates.Model
 	run   *runner.Fake
+	// machine is one of the Demo* names; manager and omarchy follow from it.
+	machine string
+	manager string
+	omarchy bool
 	// versionlock reports that the sample machine carries the dnf plugin that
 	// pins a package at a version. It is a field rather than a constant so the
 	// machine without it — where holding a package is refused with the name of
 	// the package to install — is as demonstrable as the one with it.
 	versionlock bool
+	// handedOff are the hand-off steps that ran, in order, which is what a
+	// test of the hand-off path asserts on.
+	handedOff []updates.Command
 }
 
 // NewFake builds the sample machine: fourteen pending updates including a
 // kernel and an openssl security fix, a reboot already required, two services
 // holding old code open, a snapper root configuration to snapshot into, one
 // package already held, and the dnf versionlock plugin installed.
-func NewFake() *Fake { return newFake(true) }
+func NewFake() *Fake { return newFake(DemoFedora, true) }
 
 // NewFakeWithoutVersionlock is the same sample machine with the dnf
 // versionlock plugin missing, which is what `--demo-no-versionlock` drives.
 // Every other key behaves identically; holding a package is refused, naming
 // the package that would fix it.
-func NewFakeWithoutVersionlock() *Fake { return newFake(false) }
+func NewFakeWithoutVersionlock() *Fake { return newFake(DemoFedora, false) }
 
-// newFake builds the sample machine in one of its two hold configurations.
-func newFake(versionlock bool) *Fake {
-	f := &Fake{versionlock: versionlock}
+// NewFakeMachine builds one of the DemoMachines by name.
+func NewFakeMachine(machine string) (*Fake, error) {
+	for _, known := range DemoMachines() {
+		if machine == known {
+			return newFake(machine, true), nil
+		}
+	}
+	return nil, fmt.Errorf("pkgmgr: no sample machine named %q (have %s)",
+		machine, strings.Join(DemoMachines(), ", "))
+}
+
+// newFake builds a sample machine in one of its two hold configurations.
+func newFake(machine string, versionlock bool) *Fake {
+	f := &Fake{machine: machine, versionlock: versionlock}
+	switch machine {
+	case DemoUbuntu:
+		f.manager = updates.ManagerAPT
+	case DemoOmarchy:
+		f.manager, f.omarchy = updates.ManagerPacman, true
+	default:
+		f.machine, f.manager = DemoFedora, demoManager
+	}
 	f.run = &runner.Fake{Prefix: "sudo -n", Hook: f.apply}
 	f.reset()
 	return f
@@ -55,6 +101,18 @@ func newFake(versionlock bool) *Fake {
 // reset builds the sample state. It is a function rather than a literal so
 // --demo starts from the same machine every time, however it was left.
 func (f *Fake) reset() {
+	switch f.machine {
+	case DemoUbuntu:
+		f.resetUbuntu()
+	case DemoOmarchy:
+		f.resetOmarchy()
+	default:
+		f.resetFedora()
+	}
+}
+
+// resetFedora builds the default sample machine: dnf on Fedora.
+func (f *Fake) resetFedora() {
 	pending := []updates.Package{
 		{
 			Name: "kernel", Arch: "x86_64",
@@ -133,18 +191,7 @@ func (f *Fake) reset() {
 			Repo: "updates", Size: "788.1 KiB",
 		},
 	}
-	for i := range pending {
-		pending[i].Group = GroupFor(pending[i].Name)
-	}
-	updates.SortPackages(pending)
-
-	security := 0
-	for _, p := range pending {
-		if p.Security {
-			security++
-		}
-	}
-
+	pending, security := groupPending(pending)
 	f.model = updates.Model{
 		Manager:       demoManager,
 		Distro:        "fedora",
@@ -173,6 +220,149 @@ func (f *Fake) reset() {
 	}
 }
 
+// groupPending classifies, sorts and counts a sample pending list.
+func groupPending(pending []updates.Package) ([]updates.Package, int) {
+	for i := range pending {
+		pending[i].Group = GroupFor(pending[i].Name)
+	}
+	updates.SortPackages(pending)
+	security := 0
+	for _, p := range pending {
+		if p.Security {
+			security++
+		}
+	}
+	return pending, security
+}
+
+// sampleTimers is the manager's unattended-update units, all disabled, the
+// state a freshly installed server is usually found in.
+func sampleTimers(manager string, omarchy bool) []updates.Timer {
+	timers := unitsFor(manager, omarchy)
+	for i := range timers {
+		timers[i].Present, timers[i].State = true, "disabled"
+	}
+	return timers
+}
+
+// resetUbuntu builds the apt sample machine: Ubuntu with needrestart, the
+// machine an upgrade used to fail on when a package asked a question.
+func (f *Fake) resetUbuntu() {
+	pending, security := groupPending([]updates.Package{
+		{
+			Name: "linux-image-generic", Arch: "amd64",
+			Current: "6.8.0-84.84", New: "6.8.0-85.85",
+			Repo: "noble-updates",
+		},
+		{
+			Name: "linux-firmware", Arch: "amd64",
+			Current: "20240318.git3b128b60-0ubuntu2.17",
+			New:     "20240318.git3b128b60-0ubuntu2.18", Repo: "noble-updates",
+		},
+		{
+			Name: "libc6", Arch: "amd64",
+			Current: "2.39-0ubuntu8.5", New: "2.39-0ubuntu8.6",
+			Repo: "noble-security", Security: true, SecurityRef: "noble-security",
+		},
+		{
+			Name: "systemd", Arch: "amd64",
+			Current: "255.4-1ubuntu8.10", New: "255.4-1ubuntu8.11",
+			Repo: "noble-updates",
+		},
+		{
+			Name: "openssl", Arch: "amd64",
+			Current: "3.0.13-0ubuntu3.5", New: "3.0.13-0ubuntu3.6",
+			Repo: "noble-security", Security: true, SecurityRef: "noble-security",
+		},
+		{
+			Name: "openssh-server", Arch: "amd64",
+			Current: "1:9.6p1-3ubuntu13.13", New: "1:9.6p1-3ubuntu13.14",
+			Repo: "noble-updates",
+		},
+		{
+			// A package whose config file this machine has changed: the one
+			// dpkg would have stopped to ask about.
+			Name: "chrony", Arch: "amd64",
+			Current: "4.5-1ubuntu4.1", New: "4.5-1ubuntu4.2",
+			Repo: "noble-updates",
+		},
+		{
+			Name: "nginx", Arch: "amd64",
+			Current: "1.24.0-2ubuntu7.4", New: "1.24.0-2ubuntu7.5",
+			Repo: "noble-updates", Held: true,
+		},
+		{
+			Name: "curl", Arch: "amd64",
+			Current: "8.5.0-2ubuntu10.6", New: "8.5.0-2ubuntu10.7",
+			Repo: "noble-security", Security: true, SecurityRef: "noble-security",
+		},
+	})
+	f.model = updates.Model{
+		Manager:       updates.ManagerAPT,
+		Distro:        "ubuntu",
+		Pending:       pending,
+		SecurityCount: security,
+		Restart: updates.Restart{
+			Class:    updates.RestartReboot,
+			Services: []string{"ssh.service", "chrony.service"},
+			Reason:   "linux-image-generic 6.8.0-84.84 → 6.8.0-85.85",
+			Source:   "needrestart",
+		},
+		Snapshot: snapshotFor(SnapperRootConfig, updates.ManagerAPT),
+		Timers:   sampleTimers(updates.ManagerAPT, false),
+		Hold: updates.HoldSupport{
+			Available: true,
+			Reason:    holdReason(updates.ManagerAPT),
+		},
+		Notes: []string{
+			"this is the sample machine: nothing here touches your system",
+		},
+	}
+}
+
+// resetOmarchy builds the pacman sample machine: Omarchy Server, whose
+// upgrade is its own updater, run with the terminal handed over.
+func (f *Fake) resetOmarchy() {
+	pending, security := groupPending([]updates.Package{
+		{Name: "linux", Current: "6.16.7.arch1-1", New: "6.16.8.arch1-1", Repo: "core"},
+		{Name: "linux-firmware", Current: "20250808-1", New: "20250917-1", Repo: "core"},
+		{Name: "intel-ucode", Current: "20250812-1", New: "20250912-1", Repo: "extra"},
+		{Name: "glibc", Current: "2.42+r3+gbc13db73937-1", New: "2.42+r17+g2f4a8c1b1a6-1", Repo: "core"},
+		{Name: "systemd", Current: "257.8-2", New: "257.9-1", Repo: "core"},
+		{Name: "openssl", Current: "3.5.2-1", New: "3.5.3-1", Repo: "core"},
+		{Name: "openssh", Current: "10.0p1-4", New: "10.1p1-1", Repo: "core"},
+		{Name: "curl", Current: "8.15.0-1", New: "8.16.0-1", Repo: "core"},
+		{Name: "neovim", Current: "0.11.3-1", New: "0.11.4-1", Repo: "extra"},
+	})
+	f.model = updates.Model{
+		Manager:       updates.ManagerPacman,
+		Distro:        "arch",
+		Pending:       pending,
+		SecurityCount: security,
+		Restart: updates.Restart{
+			Class:    updates.RestartReboot,
+			Services: []string{"sshd.service"},
+			Reason:   "linux 6.16.7.arch1-1 → 6.16.8.arch1-1",
+			Source:   OmarchyRestart,
+		},
+		Snapshot: snapshotFor(SnapperRootConfig, updates.ManagerPacman),
+		Timers:   sampleTimers(updates.ManagerPacman, true),
+		Hold: updates.HoldSupport{
+			Reason: updates.ManagerPacman + " has no command that pins a " +
+				"package at a version; on Arch that is the IgnorePkg line of " +
+				"/etc/pacman.conf, which is a file to edit rather than a " +
+				"command to run",
+		},
+		Notes: []string{
+			"this is the sample machine: nothing here touches your system",
+			OmarchyUpdate + " is installed, so an upgrade runs through it " +
+				"and it classifies what changed",
+			updates.ManagerPacman + " publishes no security metadata, so no " +
+				"update here can be marked as a security fix",
+		},
+	}
+}
+
 // holdSupport is the sample machine's answer about pinning a package, in both
 // of its configurations. The unavailable one carries the same hint the real
 // backend builds, so the refusal a reader sees in --demo is the refusal they
@@ -192,7 +382,21 @@ func (f *Fake) holdSupport() updates.HoldSupport {
 }
 
 // demoHistory is the sample machine's transaction log.
-func demoHistory() []updates.Transaction {
+func (f *Fake) demoHistory() []updates.Transaction {
+	switch f.machine {
+	case DemoUbuntu:
+		return []updates.Transaction{
+			{When: "2026-09-18 06:14:22", Command: "apt-get -y upgrade", Detail: "Upgrade: 23 package(s)"},
+			{When: "2026-09-11 09:02:48", Command: "apt-get install nginx", Detail: "Install: 4 package(s)"},
+			{When: "2026-09-04 06:21:07", Command: "apt-get -y upgrade", Detail: "Upgrade: 11 package(s)"},
+		}
+	case DemoOmarchy:
+		return []updates.Transaction{
+			{When: "2026-09-19 07:40:11", Command: "pacman -Syu", Detail: "31 upgraded"},
+			{When: "2026-09-12 07:38:59", Command: "pacman -Syu", Detail: "12 upgraded"},
+			{When: "2026-09-05 08:02:31", Command: "pacman -S tui-update", Detail: "1 installed"},
+		}
+	}
 	return []updates.Transaction{
 		{ID: "143", When: "2026-08-24 06:12:03", Command: "dnf -y upgrade", Detail: "37 altered"},
 		{ID: "142", When: "2026-08-21 09:41:10", Command: "dnf install nginx", Detail: "6 altered"},
@@ -204,27 +408,39 @@ func demoHistory() []updates.Transaction {
 
 // Name identifies the backend. It is the real backend's name, because --demo
 // shows what the real one would show.
-func (f *Fake) Name() string { return demoManager }
+func (f *Fake) Name() string { return f.manager }
 
 // Describe says plainly that nothing here is real.
 func (f *Fake) Describe() string {
-	return "demo (in-memory sample machine, " + demoManager + ")"
+	describe := "demo (in-memory sample machine, " + f.manager + ")"
+	if f.omarchy {
+		describe += "  ·  " + OmarchyUpdate
+	}
+	return describe
 }
 
 // Capabilities reports the same capabilities as the real backend.
 func (f *Fake) Capabilities() updates.Capabilities {
-	return CapabilitiesFor(demoManager)
+	return CapabilitiesFor(f.manager)
 }
 
-// Preview renders the command line the real backend would run.
-func (f *Fake) Preview(cmd updates.Command) string { return f.run.Preview(cmd) }
+// Preview renders the command line the real backend would run: a hand-off
+// without `-n` on the prefix, as Real.Preview renders it.
+func (f *Fake) Preview(cmd updates.Command) string {
+	if IsHandOff(cmd) {
+		fake := *f.run
+		fake.Prefix = runner.Join(handOffPrefix(strings.Fields(f.run.Prefix)))
+		return fake.Preview(cmd)
+	}
+	return f.run.Preview(cmd)
+}
 
 // Load returns the sample machine.
 func (f *Fake) Load(_ context.Context) (updates.Model, error) { return f.model, nil }
 
 // History returns the sample machine's transactions.
 func (f *Fake) History(_ context.Context) ([]updates.Transaction, error) {
-	return demoHistory(), nil
+	return f.demoHistory(), nil
 }
 
 // Plan assembles the same sequence the real backend would, against the sample
@@ -234,7 +450,7 @@ func (f *Fake) Plan(_ context.Context, opts updates.PlanOptions) (updates.Plan, 
 		f.model.SecurityCount); err != nil {
 		return updates.Plan{}, err
 	}
-	built := assemblePlan(demoManager, opts, f.model, false)
+	built := assemblePlan(f.manager, opts, f.model, f.omarchy)
 	if built.Error != nil {
 		return updates.Plan{}, built.Error
 	}
@@ -259,8 +475,58 @@ func (f *Fake) Run(ctx context.Context, cmd updates.Command) (string, error) {
 	return f.run.Run(ctx, cmd)
 }
 
-// Ran exposes the recorded commands, which is what a test asserts on.
+// Ran exposes the recorded commands, which is what a test asserts on. A
+// hand-off that ran is in it too, in its place in the sequence.
 func (f *Fake) Ran() []updates.Command { return f.run.Ran }
+
+// HandedOff exposes the hand-off steps that ran.
+func (f *Fake) HandedOff() []updates.Command { return f.handedOff }
+
+// HandOff prepares a hand-off on the sample machine. Run says, on the
+// terminal it was given, what would have run there and waits for Enter, so
+// --demo shows the screen being handed over and coming back; then it applies
+// the command to the sample machine like any other.
+func (f *Fake) HandOff(cmd updates.Command) (updates.Process, error) {
+	if !IsHandOff(cmd) {
+		return nil, fmt.Errorf("pkgmgr: %s is a runner step, not a hand-off",
+			firstArg(cmd))
+	}
+	return &fakeProcess{fake: f, cmd: cmd}, nil
+}
+
+// fakeProcess is a hand-off on the sample machine.
+type fakeProcess struct {
+	fake   *Fake
+	cmd    updates.Command
+	stdin  io.Reader
+	stdout io.Writer
+}
+
+// Run tells the handed-over terminal what the real hand-off would run, waits
+// for Enter when there is a terminal to read it from, and applies the change.
+func (p *fakeProcess) Run() error {
+	if p.stdout != nil {
+		_, _ = fmt.Fprintf(p.stdout, "\n  tui-update --demo handed the terminal "+
+			"over for:\n\n    $ %s\n\n  On a real machine it runs here and asks "+
+			"its questions on this terminal.\n  Press Enter to return to "+
+			"tui-update. ", p.fake.Preview(p.cmd))
+	}
+	if p.stdin != nil {
+		_, _ = bufio.NewReader(p.stdin).ReadString('\n')
+	}
+	p.fake.handedOff = append(p.fake.handedOff, p.cmd)
+	_, err := p.fake.run.Run(context.Background(), p.cmd)
+	return err
+}
+
+// SetStdin keeps the terminal's input, to wait for Enter on.
+func (p *fakeProcess) SetStdin(r io.Reader) { p.stdin = r }
+
+// SetStdout keeps the terminal's output, to say what would have run.
+func (p *fakeProcess) SetStdout(w io.Writer) { p.stdout = w }
+
+// SetStderr is not needed: the sample hand-off writes only to stdout.
+func (p *fakeProcess) SetStderr(io.Writer) {}
 
 // apply is the hook the fake runner calls: it makes to the in-memory machine
 // the change the real command would have made, so the demo stays coherent as
@@ -271,8 +537,13 @@ func (f *Fake) apply(cmd updates.Command) (string, error) {
 		return "ok", nil
 	}
 	switch {
-	case argv[0] == "dnf" && argv[1] == "-y":
+	case argv[0] == "dnf" && argv[1] == "-y",
+		argv[0] == "apt-get" && argv[1] == "-y",
+		argv[0] == "pacman" && argv[1] == "-Syu",
+		argv[0] == OmarchyUpdate && argv[1] == "run":
 		return f.applyUpgrade(argv), nil
+	case argv[0] == "apt-get" && argv[1] == "update":
+		return "Reading package lists... Done", nil
 	case argv[0] == "dnf" && argv[1] == "versionlock":
 		return f.applyVersionlock(argv)
 	case argv[0] == "dnf" && argv[1] == "makecache":
@@ -377,7 +648,7 @@ func (f *Fake) BuildHold(action, name string) (updates.Command, error) {
 	if err := holdRefusal(f.model.Hold); err != nil {
 		return updates.Command{}, err
 	}
-	return BuildHold(demoManager, action, name)
+	return BuildHold(f.manager, action, name)
 }
 
 // BuildReboot is the reboot the tool offers and never takes by itself.

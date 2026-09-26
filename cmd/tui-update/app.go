@@ -128,6 +128,9 @@ type stepMsg struct {
 	cmd    updates.Command
 	output string
 	err    error
+	// handOff reports a step that ran with the terminal handed over to it:
+	// its output went to the terminal, not into the message.
+	handOff bool
 }
 
 // ranMsg carries the result of a single confirmed command that is not part of
@@ -214,6 +217,46 @@ func (a *app) step(index int, cmd updates.Command) tea.Cmd {
 		out, err := backend.Run(ctx, cmd)
 		return stepMsg{index: index, cmd: cmd, output: out, err: err}
 	}
+}
+
+// runStep starts one command of the upgrade sequence: as a runner step in the
+// background, or, for a step the plan marks as a hand-off, with the terminal
+// handed over to it. Either way its result comes back as a stepMsg, so the
+// sequence goes on the same way after it.
+func (a *app) runStep(index int, cmd updates.Command) tea.Cmd {
+	if !a.plan.IsHandOff(index) {
+		return a.step(index, cmd)
+	}
+	return a.handOff(index, cmd)
+}
+
+// handOff hands the terminal over to one step of the sequence. tea.Exec
+// suspends the program, gives the child the terminal, and restores the screen
+// when it exits; the stepMsg that follows goes on with the sequence and, at
+// its end, re-reads the machine.
+func (a *app) handOff(index int, cmd updates.Command) tea.Cmd {
+	process, err := a.backend.HandOff(cmd)
+	if err != nil {
+		return func() tea.Msg {
+			return stepMsg{index: index, cmd: cmd, err: err, handOff: true}
+		}
+	}
+	return tea.Exec(process, func(err error) tea.Msg {
+		return stepMsg{index: index, cmd: cmd, err: err, handOff: true}
+	})
+}
+
+// handOffLine is what the apply pane says while a step has the terminal.
+const handOffLine = "  (the terminal is handed over to this step; " +
+	"tui-update comes back when it exits)"
+
+// startLines is what the apply pane prints before a step starts.
+func (a *app) startLines(index int, cmd updates.Command) []string {
+	lines := []string{"$ " + a.backend.Preview(cmd)}
+	if a.plan.IsHandOff(index) {
+		lines = append(lines, handOffLine)
+	}
+	return lines
 }
 
 // runOne executes a single confirmed command in the background.
@@ -355,6 +398,7 @@ func (a *app) applyBody(p updates.Plan) string {
 		lines = append(lines, "Only the packages carrying a security advisory "+
 			"are upgraded; everything else stays where it is.")
 	}
+	lines = append(lines, p.Explain...)
 	lines = append(lines, "tui-update never reboots by itself.")
 	return strings.Join(lines, "\n")
 }
@@ -374,14 +418,19 @@ func (a *app) handleStep(msg stepMsg) (tea.Model, tea.Cmd) {
 	if out := strings.TrimSpace(msg.output); out != "" {
 		a.applyLog = append(a.applyLog, splitOutput(out)...)
 	}
-	a.applyLog = append(a.applyLog, "✓ done")
+	if msg.handOff {
+		a.applyLog = append(a.applyLog, "✓ done (its output was on the terminal)")
+	} else {
+		a.applyLog = append(a.applyLog, "✓ done")
+	}
 
 	a.applyStep = msg.index + 1
 	if a.applyStep < len(a.plan.Commands) {
 		next := a.plan.Commands[a.applyStep]
-		a.applyLog = append(a.applyLog, "", "$ "+a.backend.Preview(next))
+		a.applyLog = append(a.applyLog, "")
+		a.applyLog = append(a.applyLog, a.startLines(a.applyStep, next)...)
 		a.scrollToEnd()
-		return a, a.step(a.applyStep, next)
+		return a, a.runStep(a.applyStep, next)
 	}
 
 	a.busy, a.applyDone = false, true
@@ -457,13 +506,10 @@ func (a *app) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	a.mode = modeApply
 	a.applyStep, a.applyDone = 0, false
-	a.applyLog = []string{
-		answer.title,
-		"",
-		"$ " + a.backend.Preview(answer.commands[0]),
-	}
+	a.applyLog = append([]string{answer.title, ""},
+		a.startLines(0, answer.commands[0])...)
 	a.scrollToEnd()
-	return a, a.step(0, answer.commands[0])
+	return a, a.runStep(0, answer.commands[0])
 }
 
 // handleFilter resolves the filter prompt.

@@ -133,7 +133,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.2.2/tui-update_0.2.2_linux_amd64.tar.gz | tar -xz tui-update
+curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.3.0/tui-update_0.3.0_linux_amd64.tar.gz | tar -xz tui-update
 sudo install -m0755 tui-update /usr/local/bin/tui-update
 ```
 
@@ -201,6 +201,12 @@ touches your system.
 `--demo-no-versionlock` is the same machine with dnf's versionlock plugin
 missing, which is how the hold key's refusal — and the package name it hands
 you — can be seen without uninstalling a plugin on a real host.
+
+`--demo-machine` picks another sample machine: `ubuntu` drives apt, with the
+non-interactive upgrade it runs, and `omarchy` drives Omarchy Server, where `U`
+hands the terminal over to the machine's own updater and comes back (see
+[Nothing asks behind the screen](#nothing-asks-behind-the-screen)). The default
+is `fedora`, the machine described above.
 
 ## The plan is the point
 
@@ -332,6 +338,43 @@ values to the preview and to the runner, so what you read is what executes.
 The sequence is run one command at a time, and the output streams into a pane
 as each one answers, so a long download is visible rather than a frozen screen.
 
+## Nothing asks behind the screen
+
+While `tui-update` is on screen, a command it runs has no terminal: the
+[kit runner](https://github.com/tui-tools/tui-kit#the-contract-preview-confirm-run)
+starts every step in a session of its own, so a program that wants to ask a
+question fails at once instead of waiting, invisible, behind the UI. The two
+upgrades that can ask are handled so that they do not have to.
+
+![The apt upgrade, previewed](docs/screenshots/tui-update-confirm-apt.png)
+
+**apt asks nothing.** The upgrade runs as
+
+```
+sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+  apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade
+```
+
+and the confirm dialog says what each part means. debconf takes its defaults.
+needrestart, which Ubuntu server runs after every transaction, restarts the
+services left on replaced libraries instead of asking which ones. And when a
+package ships a new version of a config file this machine has changed, the
+local file is kept: dpkg leaves the package's version beside it as
+`<file>.dpkg-dist`, to compare and merge by hand. A file nobody changed is
+replaced as usual. The variables go through `env` after `sudo`, because sudo
+resets the environment, and they are part of the command line you confirm.
+
+![The Omarchy updater, handed the terminal](docs/screenshots/tui-update-confirm-omarchy.png)
+
+**Omarchy Server's updater gets the terminal.** `omarchy-server-update run
+--no-reboot` is interactive by design: it can ask through sudo, and through its
+own prompts. So it is not run as a background step. After the same preview and
+confirm, `tui-update` hands the terminal over to it, the updater runs exactly as
+if you had typed the command, and when it exits the screen comes back, the
+sequence goes on (the post snapshot, when there is one) and the machine is read
+again. Its step is previewed with `sudo` rather than `sudo -n`, because with
+the terminal in hand sudo may ask for your password, as it would by hand.
+
 ## It never reboots by itself
 
 ![The apply screen](docs/screenshots/tui-update-apply.png)
@@ -358,6 +401,9 @@ tui-update                        # drive the real package manager
 tui-update --demo                 # sample machine, no privileges needed
 tui-update --demo --demo-no-versionlock   # the same machine without dnf's
                                           # versionlock plugin, so h refuses
+tui-update --demo --demo-machine ubuntu   # an apt machine
+tui-update --demo --demo-machine omarchy  # Omarchy Server: U hands the
+                                          # terminal to its updater
 tui-update --check                # read the updates, print JSON, exit
 tui-update --report               # print what a bug report needs, exit
 tui-update --theme ~/mytheme/colors.toml
@@ -457,8 +503,8 @@ Every one of these is previewed and confirmed first.
 | refresh (apt) | `apt-get update` |
 | refresh (dnf) | `dnf makecache --refresh -q` |
 | upgrade (pacman) | `pacman -Syu --noconfirm` |
-| upgrade (Omarchy Server) | `omarchy-server-update run --no-reboot` |
-| upgrade (apt) | `apt-get -y upgrade`, or `apt-get -y dist-upgrade` |
+| upgrade (Omarchy Server) | `omarchy-server-update run --no-reboot`, with the terminal handed over |
+| upgrade (apt) | `env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade`, or `dist-upgrade` |
 | upgrade (dnf) | `dnf -y upgrade`, or `dnf -y upgrade --security` |
 | snapshot after | `snapper create -c root -t post -d "…" --print-number` |
 | hold (apt) | `apt-mark hold <pkg>` / `apt-mark unhold <pkg>` |
@@ -475,7 +521,8 @@ On Omarchy Server the upgrade goes through the machine's own wrapper rather than
 straight to pacman, because that wrapper runs the same `pacman -Syu` and then
 classifies and restarts what changed — driving pacman directly there would skip
 half the job the machine was set up to do. `--no-reboot` is passed, since taking
-the reboot is this tool's user's decision.
+the reboot is this tool's user's decision. The wrapper can ask questions, so
+it runs with the terminal handed over to it rather than as a background step.
 
 ## Keys
 
@@ -651,7 +698,7 @@ Restart{Class, Services, Reason, RebootRequired, Source, Detail}
 Snapshot{Available, Config, Reason, Pre, Post}
 HoldSupport{Available, Reason, Hint}
 PlanOptions{Mode, Snapshot}
-Plan{Title, Mode, DryRun, Restart, Snapshot, TakeSnapshot, Commands, Notes}
+Plan{Title, Mode, DryRun, Restart, Snapshot, TakeSnapshot, Commands, HandOff, Explain, Notes}
 ```
 
 What each manager can do is a `Capabilities` value the backend returns, and the
@@ -674,6 +721,12 @@ and, on confirmation, hands the same ones back to the
 [kit runner](https://github.com/tui-tools/tui-kit#the-contract-preview-confirm-run),
 which resolves the binary and the privilege prefix. That is the whole trust
 boundary, and it is why the preview is guaranteed to match what executes.
+
+A step the plan marks in `HandOff` is the one exception to the runner: it is
+interactive by design, so `Backend.HandOff` prepares it as a process that
+Bubble Tea's `tea.Exec` starts with the terminal handed over. It is built in
+`internal/pkgmgr` from the same resolved binary and prefix (without `-n`), and
+its preview is built the same way, so the rule holds for it too.
 
 ## Development
 

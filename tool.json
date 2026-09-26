@@ -28,6 +28,14 @@
       "caption": "The confirm dialog, carrying every command of the sequence before the first one runs"
     },
     {
+      "path": "docs/screenshots/tui-update-confirm-apt.png",
+      "caption": "An apt upgrade that asks nothing: the environment and the dpkg options that keep a locally changed config file, shown and explained"
+    },
+    {
+      "path": "docs/screenshots/tui-update-confirm-omarchy.png",
+      "caption": "Omarchy Server's updater, handed the terminal after the confirm, with the screen restored when it exits"
+    },
+    {
       "path": "docs/screenshots/tui-update-apply.png",
       "caption": "The reboot the upgrade asked for: offered afterwards, never taken by the tool itself"
     },
