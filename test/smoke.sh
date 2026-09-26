@@ -473,8 +473,12 @@ check "and says so on the mode line" \
 # release and machine fields, never from its nodename, and on a guest called
 # "fedora" or "ubuntu" — which is most of them — the host name is a substring
 # of the distribution's own. Everything else in the block is searched.
+# The host name is matched as a whole token: a guest named after its
+# distribution (omarchy) would otherwise match a helper binary's name
+# (omarchy-server-update), which is not the machine's name leaking.
+host_re="(^|[^A-Za-z0-9_-])$(uname -n)([^A-Za-z0-9_-]|\$)"
 check "report leaks neither a home path nor the host name" \
-  "$bin --report | grep -vE '^(distro|kernel): ' | grep -cE '/home/|$(uname -n)' || true" \
+  "$bin --report | grep -vE '^(distro|kernel): ' | grep -cE '/home/|$host_re' || true" \
   '^0$'
 
 if [[ $fail -eq 0 ]]; then
