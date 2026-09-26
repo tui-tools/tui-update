@@ -99,7 +99,7 @@ func TestArgvTable(t *testing.T) {
 		{"snapshot pre", must(BuildSnapshot("root", "pre", "before")),
 			"snapper create -c root -t pre -d before --print-number"},
 		{"snapshot post", must(BuildSnapshot("root", "post", "after")),
-			"snapper create -c root -t post -d after --print-number"},
+			"snapper create -c root -t post --pre-number '<pre-number>' -d after --print-number"},
 		{"snapper configs", BuildSnapperConfigs(), "snapper list-configs"},
 		{"timer enable", must(BuildTimerAction(updates.TimerEnable,
 			UnitDNFAutomatic)),

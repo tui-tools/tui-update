@@ -255,6 +255,11 @@ if [[ -e /etc/snapper/configs/root ]] && command -v snapper >/dev/null; then
   check "the snapshot configuration is named" \
     "$bin --check" \
     '"snapshotConfig": "root"'
+  # snapper refuses a post snapshot without --pre-number ("Missing or invalid
+  # pre-number"), so the post command the plan would run has to carry it, with
+  # the placeholder the pre snapshot's printed number replaces at run time.
+  check_report "the post snapshot is paired with the pre one (--pre-number)" \
+    '"--pre-number"'
 else
   check "no snapshot is claimed on a machine without a snapper root config" \
     "$bin --check" \
