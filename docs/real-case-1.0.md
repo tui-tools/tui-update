@@ -58,3 +58,39 @@ dnf and pacman upgrades were not applied on a lab machine in this round (the
 smoke test reads both, and the dnf and pacman package upgrade of the tools
 themselves ran on them); the `dist-upgrade` and `security` modes, the
 snapshot step and the timers screen were not exercised.
+
+## Second run: tui-kit v0.5.0, on all three families
+
+tui-kit v0.5.0 changed how a command runs as root: it is looked up only in the
+system directories and must be owned by root, it starts from a minimal
+environment, and as root the tool refuses configuration files root does not
+own and `TUI_<TOOL>_*` variables carried in from sudo, su, doas or pkexec. So
+the work above was repeated on 2026-11-18 with a static build of this branch's
+head, `c43822f` (main with tui-kit v0.5.0 and Go 1.27.4 merged in),
+installed root-owned as `/usr/local/bin/tui-update`, on fresh tui-lab machines on
+the project's own server: Ubuntu 24.04.5 (apt), Fedora 44 (dnf) and Omarchy
+Server 4.0.1 (pacman), lab VMs again, not production hosts.
+
+- The smoke test passed on all three as the ordinary user `lab`, who
+  escalates with `sudo -n`, and again as root (`sudo env TUI_LAB_BIN=<binary> bash smoke.sh`):
+  19/19 on Ubuntu, 17/17 on Fedora, 20/20 on Omarchy Server, as user and as root. On Omarchy Server the escalation and every command it runs were
+  found through `/usr/sbin`, which the new kit trusts; nothing was refused.
+- The main change was driven through the TUI in tmux once per family as
+  `lab` and once as root, and checked on the machine afterwards:
+  a real upgrade through `U` on each: apt on Ubuntu as `lab` (50 pending
+  before, 7 after: held, kept-back and phased packages), dnf on Fedora as
+  root (210 before, 0 after, `dnf makecache --refresh` then `dnf -y
+  upgrade`), and pacman on Omarchy Server as `lab` (126 before, 0 after),
+  where the confirmed sequence took a snapper pre snapshot, handed the
+  terminal to `sudo omarchy-server-update run --no-reboot` (whose five
+  "Proceed with installation?" prompts were answered there) and took the
+  post snapshot.
+- tui-update then upgraded all three machines (see its report), Omarchy
+  Server to 4.0.2. The smoke test passed again on the upgraded machines, and
+  the new versions it observed are the 2026-11-18 lines in
+  `compat/results.jsonl` (apt 2.8.4, dnf 5.4.8, and pacman 7.1.0 on Omarchy Server 4.0.2).
+- The contract changes, on all three: `--check` prints `"backend"` (apt, dnf,
+  pacman) and no `manager`; `--demo --demo-machine fedora-no-versionlock`
+  renders; `--demo-no-versionlock` is refused.
+
+No new finding beyond #35.

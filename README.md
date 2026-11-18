@@ -708,7 +708,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `apt` |
 | Version read with | `apt --version` |
 | Minimum | 2.0 |
-| Tested | `2.8.3` |
+| Tested | `2.8.3`, `2.8.4` |
 | Version-gated features | `solver3` (since 2.9.3) |
 
 | Versions | What changes |
@@ -726,7 +726,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `dnf` |
 | Version read with | `dnf --version` |
 | Minimum | 4.0 |
-| Tested | `5.2.18`, `5.4.1` |
+| Tested | `5.2.18`, `5.4.1`, `5.4.8` |
 | Version-gated features | `dnf5` (since 5.0) |
 
 | Versions | What changes |
