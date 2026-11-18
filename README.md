@@ -197,15 +197,14 @@ and `nginx` already held so both halves of the hold key have something to do.
 Every key works, every command is built and previewed for real, and nothing
 touches your system.
 
-`--demo-no-versionlock` is the same machine with dnf's versionlock plugin
-missing, which is how the hold key's refusal — and the package name it hands
-you — can be seen without uninstalling a plugin on a real host.
-
 `--demo-machine` picks another sample machine: `ubuntu` drives apt, with the
 non-interactive upgrade it runs, and `omarchy` drives Omarchy Server, where `U`
 hands the terminal over to the machine's own updater and comes back (see
-[Nothing asks behind the screen](#nothing-asks-behind-the-screen)). The default
-is `fedora`, the machine described above.
+[Nothing asks behind the screen](#nothing-asks-behind-the-screen)).
+`fedora-no-versionlock` is the Fedora machine with dnf's versionlock plugin
+missing, which is how the hold key's refusal, and the package name it hands
+you, can be seen without uninstalling a plugin on a real host. The default is
+`fedora`, the machine described above.
 
 ## The plan is the point
 
@@ -315,7 +314,7 @@ Two honest caveats:
   which tells a reader nothing. So the plugin is detected when the pending list
   is read, and `H` refuses up front, naming the package to install —
   `python3-dnf-plugin-versionlock`, or `dnf-plugins-extras-versionlock` on RHEL
-  and its rebuilds. `tui-update --demo --demo-no-versionlock` drives that exact
+  and its rebuilds. `tui-update --demo --demo-machine fedora-no-versionlock` drives that exact
   machine, so the refusal can be seen without breaking a real one.
 - **A versionlocked package disappears from `dnf check-update`**, because the
   lock excludes it from the available set. So on dnf a lock you placed will
@@ -413,8 +412,9 @@ legible.
 ```sh
 tui-update                        # drive the real package manager
 tui-update --demo                 # sample machine, no privileges needed
-tui-update --demo --demo-no-versionlock   # the same machine without dnf's
-                                          # versionlock plugin, so h refuses
+tui-update --demo --demo-machine fedora-no-versionlock
+                                  # the same machine without dnf's
+                                  # versionlock plugin, so H refuses
 tui-update --demo --demo-machine ubuntu   # an apt machine
 tui-update --demo --demo-machine omarchy  # Omarchy Server: U hands the
                                           # terminal to its updater
@@ -437,7 +437,7 @@ $ tui-update --check | head -16
 {
   "tool": "tui-update",
   "version": "0.1.0",
-  "manager": "dnf",
+  "backend": "dnf",
   "distro": "fedora",
   "describe": "dnf via /usr/bin/sudo -n on fedora",
   "pending": 10,

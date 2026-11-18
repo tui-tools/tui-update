@@ -39,10 +39,6 @@ func defaults() map[string]string {
 // options holds the parsed command line.
 type options struct {
 	demo bool
-	// demoNoVersionlock drives the sample machine without the dnf versionlock
-	// plugin, which is the only way to see the hold key's refusal — and the
-	// package it names — without uninstalling a plugin on a real machine.
-	demoNoVersionlock bool
 	// demoMachine picks the sample machine --demo drives: Fedora's dnf by
 	// default, Ubuntu's apt or Omarchy Server's pacman, so the upgrade each
 	// of them runs — the non-interactive apt one, Omarchy's updater handed
@@ -65,9 +61,6 @@ func parseFlags(args []string, out *os.File) (options, error) {
 	fs.SetOutput(out)
 	fs.BoolVar(&opts.demo, "demo", false,
 		"run against a sample machine, without touching the real one")
-	fs.BoolVar(&opts.demoNoVersionlock, "demo-no-versionlock", false,
-		"with --demo, the sample machine has no dnf versionlock plugin, so "+
-			"holding a package is refused with the package to install")
 	fs.StringVar(&opts.demoMachine, "demo-machine", pkgmgr.DemoFedora,
 		"with --demo, the sample machine to drive: "+
 			strings.Join(pkgmgr.DemoMachines(), ", "))
@@ -201,9 +194,6 @@ func detectManager(demo bool) string {
 func pickBackend(cfg config.Config, opts options,
 	backendCompat compat.Result) (updates.Backend, error) {
 	if opts.demo {
-		if opts.demoNoVersionlock {
-			return pkgmgr.NewFakeWithoutVersionlock(), nil
-		}
 		return demoBackend(opts)
 	}
 	return pkgmgr.NewReal(cfg.SudoPrefix(), backendCompat.Caps())

@@ -189,7 +189,7 @@ func TestFakeHandOffRuns(t *testing.T) {
 func TestDemoMachines(t *testing.T) {
 	want := map[string]string{
 		DemoFedora: updates.ManagerDNF, DemoUbuntu: updates.ManagerAPT,
-		DemoOmarchy: updates.ManagerPacman,
+		DemoOmarchy: updates.ManagerPacman, DemoFedoraNoVersionlock: updates.ManagerDNF,
 	}
 	for _, machine := range DemoMachines() {
 		fake := sample(t, machine)
@@ -200,6 +200,14 @@ func TestDemoMachines(t *testing.T) {
 			updates.PlanOptions{Mode: updates.UpgradeDefault, Snapshot: true}); err != nil {
 			t.Errorf("%s: plan: %v", machine, err)
 		}
+	}
+	// The machine without the versionlock plugin is the Fedora one, and holding
+	// a package there is refused up front.
+	if fake := sample(t, DemoFedoraNoVersionlock); fake.versionlock {
+		t.Errorf("%s carries the versionlock plugin", DemoFedoraNoVersionlock)
+	}
+	if fake := sample(t, DemoFedora); !fake.versionlock {
+		t.Errorf("%s lacks the versionlock plugin", DemoFedora)
 	}
 	if _, err := NewFakeMachine("gentoo"); err == nil ||
 		!strings.Contains(err.Error(), DemoOmarchy) {

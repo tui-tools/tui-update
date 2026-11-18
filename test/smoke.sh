@@ -176,7 +176,7 @@ echo "      sudo -n: $sudo_ok"
 #    it drove. This is itself the assertion that reading needs no privilege.
 report=$("$bin" --check 2>/dev/null)
 status=$?
-if [[ $status -eq 0 ]] && grep -q "\"manager\": \"$manager\"" <<<"$report"; then
+if [[ $status -eq 0 ]] && grep -q "\"backend\": \"$manager\"" <<<"$report"; then
   printf 'PASS  check reads the updates unprivileged\n'
   pass=$((pass + 1))
 else
