@@ -91,8 +91,8 @@ func TestCheckReportsTheSummary(t *testing.T) {
 	if report.Security != 3 {
 		t.Errorf("security = %d, want 3", report.Security)
 	}
-	if report.Manager != "dnf" {
-		t.Errorf("manager = %q", report.Manager)
+	if report.Backend != "dnf" {
+		t.Errorf("backend = %q", report.Backend)
 	}
 	if report.Restart != "reboot" || !report.RebootRequired {
 		t.Errorf("restart = %q, rebootRequired = %v",
@@ -125,7 +125,7 @@ func TestCheckNeverMarshalsNull(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"tool": "tui-update"`,
-		`"manager": "dnf"`,
+		`"backend": "dnf"`,
 		`"pending": 14`,
 		`"snapshot": true`,
 	} {

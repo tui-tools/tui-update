@@ -4,8 +4,11 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14368/badge)](https://www.bestpractices.dev/projects/14368)
 
 <!-- stability:start -->
-> **Beta** tools may still change keys, flags or output before their 1.0;
-> stable tools follow semver. Pin versions, and report what breaks.
+> **Stable since v1.0.0.** Keys, flags and the `--check` JSON follow semver:
+> anything new arrives in a minor release, and a removal or a change of meaning
+> waits for the next major, announced one minor before. What stable means: [the
+> family's
+> bar](https://github.com/tui-tools/tui-kit/blob/main/docs/stability.md).
 <!-- stability:end -->
 
 A terminal UI for the updates waiting on your machine. It reads them from
@@ -22,9 +25,9 @@ sequence before running it**.
 
 ![The pending list](docs/screenshots/tui-update-main.png)
 
-> **Status: early, under validation.** An independent tool that follows the
-> Omarchy visual style; it is **not** part of the Omarchy project and not
-> endorsed by its maintainers. Expect rough edges.
+> An independent tool that follows the [Omarchy](https://omarchy.org) visual
+> style; it is not part of the Omarchy project and not endorsed by its
+> maintainers.
 
 ## Install
 
@@ -153,7 +156,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.3.3/tui-update_0.3.3_linux_amd64.tar.gz | tar -xz tui-update
+curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v1.0.0/tui-update_1.0.0_linux_amd64.tar.gz | tar -xz tui-update
 sudo install -m0755 tui-update /usr/local/bin/tui-update
 ```
 
@@ -218,15 +221,14 @@ and `nginx` already held so both halves of the hold key have something to do.
 Every key works, every command is built and previewed for real, and nothing
 touches your system.
 
-`--demo-no-versionlock` is the same machine with dnf's versionlock plugin
-missing, which is how the hold key's refusal — and the package name it hands
-you — can be seen without uninstalling a plugin on a real host.
-
 `--demo-machine` picks another sample machine: `ubuntu` drives apt, with the
 non-interactive upgrade it runs, and `omarchy` drives Omarchy Server, where `U`
 hands the terminal over to the machine's own updater and comes back (see
-[Nothing asks behind the screen](#nothing-asks-behind-the-screen)). The default
-is `fedora`, the machine described above.
+[Nothing asks behind the screen](#nothing-asks-behind-the-screen)).
+`fedora-no-versionlock` is the Fedora machine with dnf's versionlock plugin
+missing, which is how the hold key's refusal, and the package name it hands
+you, can be seen without uninstalling a plugin on a real host. The default is
+`fedora`, the machine described above.
 
 ## The plan is the point
 
@@ -336,7 +338,7 @@ Two honest caveats:
   which tells a reader nothing. So the plugin is detected when the pending list
   is read, and `H` refuses up front, naming the package to install —
   `python3-dnf-plugin-versionlock`, or `dnf-plugins-extras-versionlock` on RHEL
-  and its rebuilds. `tui-update --demo --demo-no-versionlock` drives that exact
+  and its rebuilds. `tui-update --demo --demo-machine fedora-no-versionlock` drives that exact
   machine, so the refusal can be seen without breaking a real one.
 - **A versionlocked package disappears from `dnf check-update`**, because the
   lock excludes it from the available set. So on dnf a lock you placed will
@@ -434,8 +436,9 @@ legible.
 ```sh
 tui-update                        # drive the real package manager
 tui-update --demo                 # sample machine, no privileges needed
-tui-update --demo --demo-no-versionlock   # the same machine without dnf's
-                                          # versionlock plugin, so h refuses
+tui-update --demo --demo-machine fedora-no-versionlock
+                                  # the same machine without dnf's
+                                  # versionlock plugin, so H refuses
 tui-update --demo --demo-machine ubuntu   # an apt machine
 tui-update --demo --demo-machine omarchy  # Omarchy Server: U hands the
                                           # terminal to its updater
@@ -458,7 +461,7 @@ $ tui-update --check | head -16
 {
   "tool": "tui-update",
   "version": "0.1.0",
-  "manager": "dnf",
+  "backend": "dnf",
   "distro": "fedora",
   "describe": "dnf via /usr/bin/sudo -n on fedora",
   "pending": 10,
@@ -528,6 +531,45 @@ sample machine imitates.
 The bug form asks for this block first — see
 [`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml).
 
+## Stability
+
+tui-update is stable since 1.0.0 and follows [semver](https://semver.org).
+What is frozen is the contract a script or a habit can depend on:
+
+- the keys: every key the help screen (`?`) and [Keys](#keys) list, on the
+  package list, the plan, the history and the timers screens;
+- the flags: `--check`, `--demo`, `--demo-machine` (`fedora`, `ubuntu`,
+  `omarchy`, `fedora-no-versionlock`), `--report`, `--sudo`, `--theme` and
+  `--version`, and the `TUI_UPDATE_*` configuration keys (`sudo`, `theme`);
+- the `--check` JSON: every field name and what it means. At the top level:
+  `tool`, `version`, `backend` (`apt`, `dnf` or `pacman`), `distro`,
+  `describe`, `pending`, `security`, `pendingError`, `rebootRequired`,
+  `restart` (`none`, `services` or `reboot`), `services`, `snapshot`,
+  `snapshotConfig`, `canHold`, `holds`, `timers` and `compat`. Each `timers`
+  row: `unit`, `present`, `enabled`, `active`, `state`. `compat`: `backend`,
+  `version`, `minimum`, `status`, and `notes` and `detail` when there are any.
+  A field that is left out when empty is left out on purpose, and that is part
+  of its meaning.
+
+The `model` field is not part of the contract: it is the parsed state in full,
+a diagnostic dump whose shape follows the code. Two things changed for the
+freeze: the package manager, printed as `manager` before 1.0, is `backend`, as
+in every other tool of the family; and `--demo-no-versionlock` became the
+`fedora-no-versionlock` value of `--demo-machine`.
+
+The rule that tui-update never reboots by itself is part of the contract: a
+reboot only ever happens behind its own confirm dialog.
+
+A minor release only adds: new keys, new flags, new `--check` fields. Removing
+or renaming one, or changing what it means, happens only in a major release,
+and the minor release before that major warns about it, on screen and in
+`--check`. The commands a key previews may gain a safer flag or a check in a
+minor release; what they change on the machine does not. The bar a tool in the
+family meets to be called stable is in [tui-kit's stability
+page](https://github.com/tui-tools/tui-kit/blob/main/docs/stability.md); the
+real machine this tool drove for it is described in
+[docs/real-case-1.0.md](docs/real-case-1.0.md).
+
 ## What it can do to your machine
 
 Every one of these is previewed and confirmed first.
@@ -582,7 +624,7 @@ it runs with the terminal handed over to it rather than as a background step.
 
 ![Help](docs/screenshots/tui-update-help.png)
 
-## What v0.1 can do
+## What it can do
 
 - Read the pending updates from `checkupdates` or `pacman -Qu`,
   `apt list --upgradable`, or `dnf check-update` — always from the metadata
@@ -609,7 +651,7 @@ it runs with the terminal handed over to it rather than as a background step.
 - Show and toggle the machine's unattended-update unit.
 - Follow the active Omarchy theme, and respect `NO_COLOR`.
 
-## What v0.1 cannot do
+## What it cannot do
 
 - **No per-package upgrade.** The list is not a selection: it is what the
   manager would do, and the tool applies that whole or not at all. The way to
@@ -666,7 +708,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `apt` |
 | Version read with | `apt --version` |
 | Minimum | 2.0 |
-| Tested | `2.8.3` |
+| Tested | `2.8.3`, `2.8.4` |
 | Version-gated features | `solver3` (since 2.9.3) |
 
 | Versions | What changes |
@@ -684,7 +726,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `dnf` |
 | Version read with | `dnf --version` |
 | Minimum | 4.0 |
-| Tested | `5.2.18`, `5.4.1` |
+| Tested | `5.2.18`, `5.4.1`, `5.4.8` |
 | Version-gated features | `dnf5` (since 5.0) |
 
 | Versions | What changes |

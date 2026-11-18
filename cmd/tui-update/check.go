@@ -35,8 +35,9 @@ type checkTimer struct {
 type checkReport struct {
 	Tool    string `json:"tool"`
 	Version string `json:"version"`
-	// Manager is the package manager that was detected and driven.
-	Manager string `json:"manager"`
+	// Backend is the package manager that was detected and driven (apt, dnf
+	// or pacman), under the name every tool in the family gives this field.
+	Backend string `json:"backend"`
 	// Distro is the machine's /etc/os-release ID.
 	Distro string `json:"distro,omitempty"`
 	// Describe is the backend's own one-line summary, which is where the demo
@@ -96,7 +97,7 @@ func runCheck(backend updates.Backend, backendCompat compat.Result,
 	report := checkReport{
 		Tool:           toolName,
 		Version:        version,
-		Manager:        model.Manager,
+		Backend:        model.Manager,
 		Distro:         model.Distro,
 		Describe:       backend.Describe(),
 		Pending:        len(model.Pending),

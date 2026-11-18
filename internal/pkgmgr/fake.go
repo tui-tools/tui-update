@@ -30,10 +30,16 @@ const (
 	// DemoOmarchy is pacman on Omarchy Server, whose upgrade is
 	// omarchy-server-update run as a hand-off.
 	DemoOmarchy = "omarchy"
+	// DemoFedoraNoVersionlock is the Fedora machine without the dnf
+	// versionlock plugin, where holding a package is refused with the name of
+	// the package to install.
+	DemoFedoraNoVersionlock = "fedora-no-versionlock"
 )
 
 // DemoMachines lists the sample machines, the default first.
-func DemoMachines() []string { return []string{DemoFedora, DemoUbuntu, DemoOmarchy} }
+func DemoMachines() []string {
+	return []string{DemoFedora, DemoUbuntu, DemoOmarchy, DemoFedoraNoVersionlock}
+}
 
 // Fake is an in-memory package manager. It backs --demo and the tests: every
 // key works, every command is built and previewed exactly as the real backend
@@ -67,13 +73,17 @@ type Fake struct {
 func NewFake() *Fake { return newFake(DemoFedora, true) }
 
 // NewFakeWithoutVersionlock is the same sample machine with the dnf
-// versionlock plugin missing, which is what `--demo-no-versionlock` drives.
+// versionlock plugin missing, which is what `--demo-machine
+// fedora-no-versionlock` drives.
 // Every other key behaves identically; holding a package is refused, naming
 // the package that would fix it.
 func NewFakeWithoutVersionlock() *Fake { return newFake(DemoFedora, false) }
 
 // NewFakeMachine builds one of the DemoMachines by name.
 func NewFakeMachine(machine string) (*Fake, error) {
+	if machine == DemoFedoraNoVersionlock {
+		return NewFakeWithoutVersionlock(), nil
+	}
 	for _, known := range DemoMachines() {
 		if machine == known {
 			return newFake(machine, true), nil
