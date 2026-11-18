@@ -4,8 +4,11 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14368/badge)](https://www.bestpractices.dev/projects/14368)
 
 <!-- stability:start -->
-> **Beta** tools may still change keys, flags or output before their 1.0;
-> stable tools follow semver. Pin versions, and report what breaks.
+> **Stable since v1.0.0.** Keys, flags and the `--check` JSON follow semver:
+> anything new arrives in a minor release, and a removal or a change of meaning
+> waits for the next major, announced one minor before. What stable means: [the
+> family's
+> bar](https://github.com/tui-tools/tui-kit/blob/main/docs/stability.md).
 <!-- stability:end -->
 
 A terminal UI for the updates waiting on your machine. It reads them from
@@ -22,9 +25,9 @@ sequence before running it**.
 
 ![The pending list](docs/screenshots/tui-update-main.png)
 
-> **Status: early, under validation.** An independent tool that follows the
-> Omarchy visual style; it is **not** part of the Omarchy project and not
-> endorsed by its maintainers. Expect rough edges.
+> An independent tool that follows the [Omarchy](https://omarchy.org) visual
+> style; it is not part of the Omarchy project and not endorsed by its
+> maintainers.
 
 ## Install
 
@@ -49,10 +52,14 @@ setup by hand — read it, or read the script first with `curl -fsSL
 https://pkgs.tui.tools/install.sh -o install.sh`:
 
 ```sh
-curl -fsSL -o /tmp/tui-tools.asc https://pkgs.tui.tools/pubkey.asc
-sudo pacman-key --add /tmp/tui-tools.asc
-sudo pacman-key --lsign-key \
-  "$(gpg --show-keys --with-colons /tmp/tui-tools.asc | awk -F: '/^fpr:/{print $10; exit}')"
+k="$(mktemp -d)/tui-tools.asc"
+curl -fsSL --proto =https --tlsv1.2 -o "$k" https://pkgs.tui.tools/pubkey.asc
+# Go on only if this prints "key OK": one key, fingerprint 767CFB337B01F32FFC073F3F389120B277E4FB44.
+[ "$(gpg --show-keys --with-colons "$k" \
+  | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }')" \
+  = 767CFB337B01F32FFC073F3F389120B277E4FB44 ] && echo "key OK" || { echo "WRONG KEY: stop here"; rm -f "$k"; }
+sudo pacman-key --add "$k"
+sudo pacman-key --lsign-key 767CFB337B01F32FFC073F3F389120B277E4FB44
 printf '[tui-tools]\nServer = https://pkgs.tui.tools/arch/$arch\n' \
   | sudo tee -a /etc/pacman.conf
 sudo pacman -Sy
@@ -83,9 +90,14 @@ setup by hand — read it, or read the script first with `curl -fsSL
 https://pkgs.tui.tools/install.sh -o install.sh`:
 
 ```sh
+k="$(mktemp -d)/tui-tools.asc"
+curl -fsSL --proto =https --tlsv1.2 -o "$k" https://pkgs.tui.tools/pubkey.asc
+# Go on only if this prints "key OK": one key, fingerprint 767CFB337B01F32FFC073F3F389120B277E4FB44.
+[ "$(gpg --show-keys --with-colons "$k" \
+  | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }')" \
+  = 767CFB337B01F32FFC073F3F389120B277E4FB44 ] && echo "key OK" || { echo "WRONG KEY: stop here"; rm -f "$k"; }
 sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://pkgs.tui.tools/pubkey.asc \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/tui-tools.gpg
+sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/tui-tools.gpg "$k"
 echo "deb [signed-by=/etc/apt/keyrings/tui-tools.gpg] https://pkgs.tui.tools/deb stable main" \
   | sudo tee /etc/apt/sources.list.d/tui-tools.list
 sudo apt update
@@ -116,9 +128,21 @@ setup by hand — read it, or read the script first with `curl -fsSL
 https://pkgs.tui.tools/install.sh -o install.sh`:
 
 ```sh
-sudo rpm --import https://pkgs.tui.tools/pubkey.asc
-sudo curl -fsSL -o /etc/yum.repos.d/tui-tools.repo https://pkgs.tui.tools/rpm/tui-tools.repo
-sudo dnf makecache
+k="$(mktemp -d)/tui-tools.asc"
+curl -fsSL --proto =https --tlsv1.2 -o "$k" https://pkgs.tui.tools/pubkey.asc
+# Go on only if this prints "key OK": one key, fingerprint 767CFB337B01F32FFC073F3F389120B277E4FB44.
+[ "$(gpg --show-keys --with-colons "$k" \
+  | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }')" \
+  = 767CFB337B01F32FFC073F3F389120B277E4FB44 ] && echo "key OK" || { echo "WRONG KEY: stop here"; rm -f "$k"; }
+sudo install -d -m 0755 /etc/pki/rpm-gpg
+sudo install -m 0644 "$k" /etc/pki/rpm-gpg/RPM-GPG-KEY-tui-tools
+sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-tui-tools
+printf '%s\n' '[tui-tools]' 'name=tui-tools' 'baseurl=https://pkgs.tui.tools/rpm/$basearch' \
+  'enabled=1' 'gpgcheck=1' 'repo_gpgcheck=1' \
+  'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-tui-tools' 'metadata_expire=1h' \
+  | sudo tee /etc/yum.repos.d/tui-tools.repo
+# dnf asks to import the key for the index: answer y if it shows 767CFB337B01F32FFC073F3F389120B277E4FB44.
+sudo dnf makecache --repo tui-tools
 ```
 
 Then, and for every other tool in the family:
@@ -132,7 +156,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v0.3.3/tui-update_0.3.3_linux_amd64.tar.gz | tar -xz tui-update
+curl -fsSL https://github.com/tui-tools/tui-update/releases/download/v1.0.0/tui-update_1.0.0_linux_amd64.tar.gz | tar -xz tui-update
 sudo install -m0755 tui-update /usr/local/bin/tui-update
 ```
 
@@ -507,6 +531,45 @@ sample machine imitates.
 The bug form asks for this block first — see
 [`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml).
 
+## Stability
+
+tui-update is stable since 1.0.0 and follows [semver](https://semver.org).
+What is frozen is the contract a script or a habit can depend on:
+
+- the keys: every key the help screen (`?`) and [Keys](#keys) list, on the
+  package list, the plan, the history and the timers screens;
+- the flags: `--check`, `--demo`, `--demo-machine` (`fedora`, `ubuntu`,
+  `omarchy`, `fedora-no-versionlock`), `--report`, `--sudo`, `--theme` and
+  `--version`, and the `TUI_UPDATE_*` configuration keys (`sudo`, `theme`);
+- the `--check` JSON: every field name and what it means. At the top level:
+  `tool`, `version`, `backend` (`apt`, `dnf` or `pacman`), `distro`,
+  `describe`, `pending`, `security`, `pendingError`, `rebootRequired`,
+  `restart` (`none`, `services` or `reboot`), `services`, `snapshot`,
+  `snapshotConfig`, `canHold`, `holds`, `timers` and `compat`. Each `timers`
+  row: `unit`, `present`, `enabled`, `active`, `state`. `compat`: `backend`,
+  `version`, `minimum`, `status`, and `notes` and `detail` when there are any.
+  A field that is left out when empty is left out on purpose, and that is part
+  of its meaning.
+
+The `model` field is not part of the contract: it is the parsed state in full,
+a diagnostic dump whose shape follows the code. Two things changed for the
+freeze: the package manager, printed as `manager` before 1.0, is `backend`, as
+in every other tool of the family; and `--demo-no-versionlock` became the
+`fedora-no-versionlock` value of `--demo-machine`.
+
+The rule that tui-update never reboots by itself is part of the contract: a
+reboot only ever happens behind its own confirm dialog.
+
+A minor release only adds: new keys, new flags, new `--check` fields. Removing
+or renaming one, or changing what it means, happens only in a major release,
+and the minor release before that major warns about it, on screen and in
+`--check`. The commands a key previews may gain a safer flag or a check in a
+minor release; what they change on the machine does not. The bar a tool in the
+family meets to be called stable is in [tui-kit's stability
+page](https://github.com/tui-tools/tui-kit/blob/main/docs/stability.md); the
+real machine this tool drove for it is described in
+[docs/real-case-1.0.md](docs/real-case-1.0.md).
+
 ## What it can do to your machine
 
 Every one of these is previewed and confirmed first.
@@ -561,7 +624,7 @@ it runs with the terminal handed over to it rather than as a background step.
 
 ![Help](docs/screenshots/tui-update-help.png)
 
-## What v0.1 can do
+## What it can do
 
 - Read the pending updates from `checkupdates` or `pacman -Qu`,
   `apt list --upgradable`, or `dnf check-update` — always from the metadata
@@ -588,7 +651,7 @@ it runs with the terminal handed over to it rather than as a background step.
 - Show and toggle the machine's unattended-update unit.
 - Follow the active Omarchy theme, and respect `NO_COLOR`.
 
-## What v0.1 cannot do
+## What it cannot do
 
 - **No per-package upgrade.** The list is not a selection: it is what the
   manager would do, and the tool applies that whole or not at all. The way to
